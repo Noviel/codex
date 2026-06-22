@@ -6,6 +6,7 @@ use tempfile::tempdir;
 
 const ALTERNATE_MARKETPLACE_RELATIVE_PATH: &str = ".claude-plugin/marketplace.json";
 const ALTERNATE_PLUGIN_MANIFEST_RELATIVE_PATH: &str = ".claude-plugin/plugin.json";
+const TEST_NPM_INTEGRITY: &str = "sha512-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==";
 
 fn write_alternate_marketplace(repo_root: &Path, contents: &str) -> AbsolutePathBuf {
     let marketplace_path = repo_root.join(ALTERNATE_MARKETPLACE_RELATIVE_PATH);
@@ -241,8 +242,9 @@ fn find_marketplace_plugin_supports_npm_sources() {
       "source": {
         "source": "npm",
         "package": "@acme/codex-plugin",
-        "version": "^1.2.0",
-        "registry": "https://npm.example.com"
+        "version": "1.2.0",
+        "registry": "https://npm.example.com",
+        "integrity": "sha512-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="
       }
     }
   ]
@@ -263,8 +265,9 @@ fn find_marketplace_plugin_supports_npm_sources() {
                 .unwrap(),
             source: MarketplacePluginSource::Npm {
                 package: "@acme/codex-plugin".to_string(),
-                version: Some("^1.2.0".to_string()),
+                version: "1.2.0".to_string(),
                 registry: Some("https://npm.example.com".to_string()),
+                integrity: TEST_NPM_INTEGRITY.to_string(),
             },
             policy: MarketplacePluginPolicy {
                 installation: MarketplacePluginInstallPolicy::Available,
@@ -275,6 +278,66 @@ fn find_marketplace_plugin_supports_npm_sources() {
             manifest: None,
             manifest_fallback: minimal_manifest_fallback("npm-plugin"),
         }
+    );
+}
+
+#[test]
+fn find_marketplace_plugin_skips_unsafe_npm_sources() {
+    let tmp = tempdir().unwrap();
+    let repo_root = tmp.path().join("repo");
+    fs::create_dir_all(repo_root.join(".git")).unwrap();
+    let marketplace_path = write_alternate_marketplace(
+        &repo_root,
+        r#"{
+  "name": "codex-curated",
+  "plugins": [
+    {
+      "name": "remote-version",
+      "source": {
+        "source": "npm",
+        "package": "@acme/codex-plugin",
+        "version": "https://attacker.example/plugin.tgz",
+        "registry": "https://npm.example.com",
+        "integrity": "sha512-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="
+      }
+    },
+    {
+      "name": "plaintext-registry",
+      "source": {
+        "source": "npm",
+        "package": "@acme/codex-plugin",
+        "version": "1.2.0",
+        "registry": "http://npm.example.com",
+        "integrity": "sha512-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="
+      }
+    },
+    {
+      "name": "credential-registry",
+      "source": {
+        "source": "npm",
+        "package": "@acme/codex-plugin",
+        "version": "1.2.0",
+        "registry": "https://user:password@npm.example.com",
+        "integrity": "sha512-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="
+      }
+    },
+    {
+      "name": "invalid-integrity",
+      "source": {
+        "source": "npm",
+        "package": "@acme/codex-plugin",
+        "version": "1.2.0",
+        "registry": "https://npm.example.com",
+        "integrity": "sha256-not-supported"
+      }
+    }
+  ]
+}"#,
+    );
+
+    assert_eq!(
+        load_marketplace(&marketplace_path).unwrap().plugins,
+        Vec::new()
     );
 }
 

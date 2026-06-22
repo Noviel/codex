@@ -7,6 +7,7 @@ use codex_plugin::PluginId;
 use codex_plugin::PluginIdError;
 use codex_protocol::protocol::Product;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use semver::Version;
 use serde::Deserialize;
 use serde_json::Map as JsonMap;
 use serde_json::Value as JsonValue;
@@ -86,8 +87,8 @@ impl MarketplacePluginManifestFallback {
     }
 
     pub(crate) fn parse_for_listing(&self) -> Option<crate::manifest::PluginManifest> {
-        // Git sources have no plugin root before install. Parse against a host-native synthetic
-        // absolute root, then discard path-bearing fields so listings expose metadata only.
+        // Materialized sources have no plugin root before install. Parse against a host-native
+        // synthetic absolute root, then discard path-bearing fields so listings expose metadata only.
         let plugin_root = Path::new(if cfg!(windows) { r"C:\" } else { "/" });
         let mut manifest = crate::manifest::parse_plugin_manifest(
             plugin_root,
@@ -135,8 +136,9 @@ pub enum MarketplacePluginSource {
     },
     Npm {
         package: String,
-        version: Option<String>,
+        version: String,
         registry: Option<String>,
+        integrity: String,
     },
 }
 
@@ -628,11 +630,13 @@ fn resolve_plugin_source(
                 package,
                 version,
                 registry,
+                integrity,
             },
         ) => Ok(MarketplacePluginSource::Npm {
             package: normalize_npm_package(marketplace_path, &package)?,
-            version: normalize_optional_npm_version(marketplace_path, version)?,
+            version: normalize_npm_version(marketplace_path, version)?,
             registry: normalize_optional_npm_registry(marketplace_path, registry)?,
+            integrity: normalize_npm_integrity(marketplace_path, integrity)?,
         }),
         RawMarketplaceManifestPluginSource::Unsupported(_) => {
             unreachable!("unsupported plugin sources should be filtered before resolution")
@@ -806,11 +810,34 @@ fn is_valid_npm_package_segment(segment: &str) -> bool {
             .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'))
 }
 
-fn normalize_optional_npm_version(
+fn normalize_npm_version(
     marketplace_path: &AbsolutePathBuf,
-    version: Option<String>,
-) -> Result<Option<String>, MarketplaceError> {
-    normalize_optional_npm_source_field(marketplace_path, version, "version")
+    version: String,
+) -> Result<String, MarketplaceError> {
+    let version = version.trim();
+    if Version::parse(version).is_err() {
+        return Err(MarketplaceError::InvalidMarketplaceFile {
+            path: marketplace_path.to_path_buf(),
+            message: format!(
+                "npm plugin source version must be an exact semver version: {version}"
+            ),
+        });
+    }
+    Ok(version.to_string())
+}
+
+fn normalize_npm_integrity(
+    marketplace_path: &AbsolutePathBuf,
+    integrity: String,
+) -> Result<String, MarketplaceError> {
+    let integrity = integrity.trim();
+    crate::npm_source::validate_npm_integrity(integrity).map_err(|message| {
+        MarketplaceError::InvalidMarketplaceFile {
+            path: marketplace_path.to_path_buf(),
+            message,
+        }
+    })?;
+    Ok(integrity.to_string())
 }
 
 fn normalize_optional_npm_registry(
@@ -827,7 +854,13 @@ fn normalize_optional_npm_registry(
             path: marketplace_path.to_path_buf(),
             message: format!("invalid npm plugin source registry: {registry}"),
         })?;
-    if !matches!(parsed.scheme(), "http" | "https") || parsed.host_str().is_none() {
+    if parsed.scheme() != "https"
+        || parsed.host_str().is_none()
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+        || parsed.query().is_some()
+        || parsed.fragment().is_some()
+    {
         return Err(MarketplaceError::InvalidMarketplaceFile {
             path: marketplace_path.to_path_buf(),
             message: format!("invalid npm plugin source registry: {registry}"),
@@ -994,8 +1027,9 @@ enum RawMarketplaceManifestPluginSourceObject {
     },
     Npm {
         package: String,
-        version: Option<String>,
+        version: String,
         registry: Option<String>,
+        integrity: String,
     },
 }
 

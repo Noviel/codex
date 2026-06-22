@@ -2871,15 +2871,17 @@ fn plugin_source_serializes_local_git_npm_and_remote_variants() {
     assert_eq!(
         serde_json::to_value(PluginSource::Npm {
             package: "@acme/plugin".to_string(),
-            version: Some("^1.2.0".to_string()),
+            version: "1.2.0".to_string(),
             registry: Some("https://npm.example.com".to_string()),
+            integrity: "sha512-test-integrity".to_string(),
         })
         .unwrap(),
         json!({
             "type": "npm",
             "package": "@acme/plugin",
-            "version": "^1.2.0",
+            "version": "1.2.0",
             "registry": "https://npm.example.com",
+            "integrity": "sha512-test-integrity",
         }),
     );
 

@@ -2477,14 +2477,14 @@ pub(crate) fn remote_plugin_install_required_description(
             package,
             version,
             registry,
+            integrity,
         } => {
             let mut parts = vec![package.clone()];
-            if let Some(version) = version {
-                parts.push(format!("version `{version}`"));
-            }
+            parts.push(format!("version `{version}`"));
             if let Some(registry) = registry {
                 parts.push(format!("registry `{registry}`"));
             }
+            parts.push(format!("integrity `{integrity}`"));
             parts.join(", ")
         }
     };

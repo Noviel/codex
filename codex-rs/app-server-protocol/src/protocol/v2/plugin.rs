@@ -748,8 +748,12 @@ pub enum PluginSource {
     #[ts(rename_all = "camelCase")]
     Npm {
         package: String,
-        version: Option<String>,
+        /// Exact semver version pinned by the marketplace.
+        version: String,
+        /// Optional HTTPS registry URL. Authentication stays in the user's npm config.
         registry: Option<String>,
+        /// SRI digest for the packed npm tarball, currently restricted to sha512.
+        integrity: String,
     },
     /// The plugin is available in the remote catalog. Download metadata is
     /// kept server-side and is not exposed through the app-server API.

@@ -289,14 +289,14 @@ pub async fn run_plugin_list(
                         package,
                         version,
                         registry,
+                        integrity,
                     } => {
                         let mut parts = vec![package.clone()];
-                        if let Some(version) = version {
-                            parts.push(format!("version `{version}`"));
-                        }
+                        parts.push(format!("version `{version}`"));
                         if let Some(registry) = registry {
                             parts.push(format!("registry `{registry}`"));
                         }
+                        parts.push(format!("integrity `{integrity}`"));
                         parts.join(", ")
                     }
                 };
@@ -428,10 +428,10 @@ enum JsonPluginSource {
     },
     Npm {
         package: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        version: Option<String>,
+        version: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         registry: Option<String>,
+        integrity: String,
     },
 }
 
@@ -462,10 +462,12 @@ impl JsonPluginSource {
                 package,
                 version,
                 registry,
+                integrity,
             } => Self::Npm {
                 package,
                 version,
                 registry,
+                integrity,
             },
         }
     }

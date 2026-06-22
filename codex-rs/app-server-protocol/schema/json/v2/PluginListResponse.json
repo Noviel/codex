@@ -415,10 +415,15 @@
         },
         {
           "properties": {
+            "integrity": {
+              "description": "SRI digest for the packed npm tarball, currently restricted to sha512.",
+              "type": "string"
+            },
             "package": {
               "type": "string"
             },
             "registry": {
+              "description": "Optional HTTPS registry URL. Authentication stays in the user's npm config.",
               "type": [
                 "string",
                 "null"
@@ -432,15 +437,15 @@
               "type": "string"
             },
             "version": {
-              "type": [
-                "string",
-                "null"
-              ]
+              "description": "Exact semver version pinned by the marketplace.",
+              "type": "string"
             }
           },
           "required": [
+            "integrity",
             "package",
-            "type"
+            "type",
+            "version"
           ],
           "title": "NpmPluginSource",
           "type": "object"
