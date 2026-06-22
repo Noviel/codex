@@ -1,4 +1,5 @@
 use crate::git_transport::NeutralGitCwd;
+use crate::git_transport::sanitize_repository_environment;
 use std::fs::File;
 use std::path::Path;
 use std::path::PathBuf;
@@ -243,17 +244,14 @@ fn fetch_curated_plugins_commit_from(
     context: &str,
 ) -> Result<(), String> {
     let fetch_refspec = format!("+{source_revision}:{CURATED_PLUGINS_FETCH_REF}");
-    let output = run_git_command_with_timeout(
-        Command::new(git_binary)
-            .env("GIT_OPTIONAL_LOCKS", "0")
-            .arg("-C")
-            .arg(repo_path)
-            .args(["fetch", "--depth", "1", "--no-tags"])
-            .arg(source)
-            .arg(fetch_refspec),
-        context,
-        CURATED_PLUGINS_GIT_TIMEOUT,
-    )?;
+    let mut command = git_command(git_binary);
+    command
+        .arg("-C")
+        .arg(repo_path)
+        .args(["fetch", "--depth", "1", "--no-tags"])
+        .arg(source)
+        .arg(fetch_refspec);
+    let output = run_git_command_with_timeout(&mut command, context, CURATED_PLUGINS_GIT_TIMEOUT)?;
     ensure_git_success(&output, context)
 }
 
@@ -278,15 +276,9 @@ fn run_git_in_repo(
     args: &[&str],
     context: &str,
 ) -> Result<(), String> {
-    let output = run_git_command_with_timeout(
-        Command::new(git_binary)
-            .env("GIT_OPTIONAL_LOCKS", "0")
-            .arg("-C")
-            .arg(repo_path)
-            .args(args),
-        context,
-        CURATED_PLUGINS_GIT_TIMEOUT,
-    )?;
+    let mut command = git_command(git_binary);
+    command.arg("-C").arg(repo_path).args(args);
+    let output = run_git_command_with_timeout(&mut command, context, CURATED_PLUGINS_GIT_TIMEOUT)?;
     ensure_git_success(&output, context)
 }
 
@@ -586,9 +578,8 @@ fn read_local_git_or_sha_file(
 fn git_ls_remote_head_sha(git_binary: &str) -> Result<String, String> {
     let neutral_cwd = NeutralGitCwd::new()
         .map_err(|err| format!("failed to create neutral Git working directory: {err}"))?;
-    let mut command = Command::new(git_binary);
+    let mut command = git_command(git_binary);
     command
-        .env("GIT_OPTIONAL_LOCKS", "0")
         .arg("ls-remote")
         .arg("https://github.com/openai/plugins.git")
         .arg("HEAD");
@@ -616,8 +607,8 @@ fn git_ls_remote_head_sha(git_binary: &str) -> Result<String, String> {
 }
 
 fn git_head_sha(repo_path: &Path, git_binary: &str) -> Result<String, String> {
-    let output = Command::new(git_binary)
-        .env("GIT_OPTIONAL_LOCKS", "0")
+    let mut command = git_command(git_binary);
+    let output = command
         .arg("-C")
         .arg(repo_path)
         .arg("rev-parse")
@@ -639,6 +630,13 @@ fn git_head_sha(repo_path: &Path, git_binary: &str) -> Result<String, String> {
         ));
     }
     Ok(sha)
+}
+
+fn git_command(git_binary: &str) -> Command {
+    let mut command = Command::new(git_binary);
+    command.env("GIT_OPTIONAL_LOCKS", "0");
+    sanitize_repository_environment(&mut command);
+    command
 }
 
 fn run_git_command_with_timeout(
