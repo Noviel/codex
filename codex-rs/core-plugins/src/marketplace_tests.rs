@@ -226,6 +226,59 @@ fn find_marketplace_plugin_omits_interface_asset_paths_for_git_sources() {
 }
 
 #[test]
+fn find_marketplace_plugin_supports_npm_sources() {
+    let tmp = tempdir().unwrap();
+    let repo_root = tmp.path().join("repo");
+    fs::create_dir_all(repo_root.join(".git")).unwrap();
+    fs::create_dir_all(repo_root.join(".agents/plugins")).unwrap();
+    fs::write(
+        repo_root.join(".agents/plugins/marketplace.json"),
+        r#"{
+  "name": "codex-curated",
+  "plugins": [
+    {
+      "name": "npm-plugin",
+      "source": {
+        "source": "npm",
+        "package": "@acme/codex-plugin",
+        "version": "^1.2.0",
+        "registry": "https://npm.example.com"
+      }
+    }
+  ]
+}"#,
+    )
+    .unwrap();
+
+    let resolved = find_marketplace_plugin(
+        &AbsolutePathBuf::try_from(repo_root.join(".agents/plugins/marketplace.json")).unwrap(),
+        "npm-plugin",
+    )
+    .unwrap();
+
+    assert_eq!(
+        resolved,
+        ResolvedMarketplacePlugin {
+            plugin_id: PluginId::new("npm-plugin".to_string(), "codex-curated".to_string())
+                .unwrap(),
+            source: MarketplacePluginSource::Npm {
+                package: "@acme/codex-plugin".to_string(),
+                version: Some("^1.2.0".to_string()),
+                registry: Some("https://npm.example.com".to_string()),
+            },
+            policy: MarketplacePluginPolicy {
+                installation: MarketplacePluginInstallPolicy::Available,
+                authentication: MarketplacePluginAuthPolicy::OnInstall,
+                products: None,
+            },
+            interface: None,
+            manifest: None,
+            manifest_fallback: minimal_manifest_fallback("npm-plugin"),
+        }
+    );
+}
+
+#[test]
 fn find_marketplace_plugin_builds_manifest_fallback_from_entry() {
     let tmp = tempdir().unwrap();
     let repo_root = tmp.path().join("repo");
