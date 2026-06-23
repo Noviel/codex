@@ -15,13 +15,13 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
-use codex_app_server_protocol::JSONRPCMessage;
-use codex_app_server_protocol::JSONRPCResponse;
-use codex_app_server_protocol::RequestId;
 use codex_exec_server::HttpHeader;
 use codex_exec_server::HttpRequestParams;
 use codex_exec_server::HttpRequestResponse;
 use codex_exec_server::InitializeParams;
+use codex_exec_server_protocol::JSONRPCMessage;
+use codex_exec_server_protocol::JSONRPCResponse;
+use codex_exec_server_protocol::RequestId;
 use common::exec_server::ExecServerHarness;
 use common::exec_server::exec_server_with_env;
 use pretty_assertions::assert_eq;
@@ -48,7 +48,7 @@ const NON_CHATGPT_MCP_URL: &str = "https://api.openai.com/backend-api/ps/mcp";
 struct CapturedRequest {
     connect_authority: String,
     request_line: String,
-    headers: BTreeMap<String, String>,
+    headers: BTreeMap<String, Vec<String>>,
 }
 
 struct TlsMaterial {
@@ -65,8 +65,9 @@ struct TlsInterceptingProxy {
 }
 
 /// Exercises the same `http/request` route used by remotely executed Streamable HTTP MCP calls.
-/// Each RPC builds a fresh reqwest client, so replay on requests two and three proves that the
-/// Cloudflare store is shared across those clients in the exec-server process.
+/// Each RPC builds a fresh reqwest client. The second RPC also follows a same-host redirect that
+/// replaces `__cflb`, proving both cross-client persistence and per-attempt refresh while explicit
+/// repeated `Cookie` headers remain intact.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn exec_server_replays_only_chatgpt_cloudflare_cookies() -> anyhow::Result<()> {
     let proxy = TlsInterceptingProxy::start(/*expected_requests*/ 4)?;
@@ -106,32 +107,71 @@ async fn exec_server_replays_only_chatgpt_cloudflare_cookies() -> anyhow::Result
         ("chatgpt.com:443", "POST /backend-api/ps/mcp HTTP/1.1", None,)
     );
 
-    let second_response =
-        execute_http_request(&mut server, CHATGPT_MCP_URL, Vec::new(), "second").await?;
-    assert_eq!(second_response.status, 200);
-    let second = proxy.next_request()?;
-    assert_eq!(
-        cookie_pairs(&second),
-        BTreeMap::from([("__cflb".to_string(), "west".to_string())])
-    );
-
     let preview_cookie = HttpHeader {
         name: "cookie".to_string(),
         value: "oai-chat-plugin-service-preview=true".to_string(),
     };
+    let caller_cookie = HttpHeader {
+        name: "cookie".to_string(),
+        value: "caller-cookie=preserved".to_string(),
+    };
     let preview_response = execute_http_request(
         &mut server,
         CHATGPT_MCP_URL,
-        vec![preview_cookie],
+        vec![preview_cookie, caller_cookie],
         "preview",
     )
     .await?;
     assert_eq!(preview_response.status, 200);
-    let preview = proxy.next_request()?;
+    let preview_before_redirect = proxy.next_request()?;
     assert_eq!(
-        cookie_pairs(&preview),
+        preview_before_redirect
+            .headers
+            .get("cookie")
+            .cloned()
+            .unwrap_or_default(),
+        vec![
+            "oai-chat-plugin-service-preview=true".to_string(),
+            "caller-cookie=preserved".to_string(),
+            "__cflb=west".to_string(),
+        ]
+    );
+    assert_eq!(
+        cookie_pairs(&preview_before_redirect),
         BTreeMap::from([
             ("__cflb".to_string(), "west".to_string()),
+            ("caller-cookie".to_string(), "preserved".to_string()),
+            (
+                "oai-chat-plugin-service-preview".to_string(),
+                "true".to_string(),
+            ),
+        ])
+    );
+
+    let preview_after_redirect = proxy.next_request()?;
+    assert_eq!(
+        (
+            preview_after_redirect.request_line.as_str(),
+            preview_after_redirect
+                .headers
+                .get("cookie")
+                .cloned()
+                .unwrap_or_default(),
+        ),
+        (
+            "POST /backend-api/ps/mcp/redirected HTTP/1.1",
+            vec![
+                "oai-chat-plugin-service-preview=true".to_string(),
+                "caller-cookie=preserved".to_string(),
+                "__cflb=central".to_string(),
+            ],
+        )
+    );
+    assert_eq!(
+        cookie_pairs(&preview_after_redirect),
+        BTreeMap::from([
+            ("__cflb".to_string(), "central".to_string()),
+            ("caller-cookie".to_string(), "preserved".to_string()),
             (
                 "oai-chat-plugin-service-preview".to_string(),
                 "true".to_string(),
@@ -264,17 +304,33 @@ fn run_tls_intercepting_proxy(
             }
         }
 
-        let set_cookie_headers = if request_index == 0 {
-            concat!(
+        let response = match request_index {
+            0 => concat!(
+                "HTTP/1.1 200 OK\r\n",
+                "content-length: 2\r\n",
+                "connection: close\r\n",
                 "set-cookie: __cflb=west; Path=/; Secure; HttpOnly\r\n",
                 "set-cookie: chatgpt_session=secret; Path=/; Secure; HttpOnly\r\n",
-            )
-        } else {
-            ""
+                "\r\n",
+                "ok",
+            ),
+            1 => concat!(
+                "HTTP/1.1 307 Temporary Redirect\r\n",
+                "content-length: 0\r\n",
+                "connection: close\r\n",
+                "location: /backend-api/ps/mcp/redirected\r\n",
+                "set-cookie: __cflb=central; Path=/; Secure; HttpOnly\r\n",
+                "set-cookie: chatgpt_session=still-secret; Path=/; Secure; HttpOnly\r\n",
+                "\r\n",
+            ),
+            _ => concat!(
+                "HTTP/1.1 200 OK\r\n",
+                "content-length: 2\r\n",
+                "connection: close\r\n",
+                "\r\n",
+                "ok",
+            ),
         };
-        let response = format!(
-            "HTTP/1.1 200 OK\r\ncontent-length: 2\r\nconnection: close\r\n{set_cookie_headers}\r\nok"
-        );
         tls.write_all(response.as_bytes())?;
         tls.flush()?;
     }
@@ -296,12 +352,15 @@ fn capture_http_request(
         .next()
         .ok_or_else(|| io::Error::other("HTTP request should include a request line"))?
         .to_string();
-    let mut headers = BTreeMap::new();
+    let mut headers: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for line in lines.filter(|line| !line.is_empty()) {
         let (name, value) = line
             .split_once(':')
             .ok_or_else(|| io::Error::other(format!("invalid HTTP header: {line}")))?;
-        headers.insert(name.to_ascii_lowercase(), value.trim().to_string());
+        headers
+            .entry(name.to_ascii_lowercase())
+            .or_default()
+            .push(value.trim().to_string());
     }
     Ok(CapturedRequest {
         connect_authority,
@@ -329,6 +388,7 @@ fn cookie_pairs(request: &CapturedRequest) -> BTreeMap<String, String> {
         .headers
         .get("cookie")
         .into_iter()
+        .flatten()
         .flat_map(|header| header.split(';'))
         .filter_map(|cookie| cookie.trim().split_once('='))
         .map(|(name, value)| (name.to_string(), value.to_string()))
@@ -384,7 +444,7 @@ where
     let message = server
         .wait_for_event(|event| match event {
             JSONRPCMessage::Response(JSONRPCResponse { id, .. })
-            | JSONRPCMessage::Error(codex_app_server_protocol::JSONRPCError { id, .. }) => {
+            | JSONRPCMessage::Error(codex_exec_server_protocol::JSONRPCError { id, .. }) => {
                 id == &request_id
             }
             _ => false,

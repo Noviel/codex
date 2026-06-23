@@ -9,6 +9,7 @@ use std::error::Error as StdError;
 use std::time::Duration;
 
 use codex_client::build_reqwest_client_with_custom_ca;
+use codex_client::is_allowed_chatgpt_host;
 use codex_client::merge_chatgpt_cloudflare_cookie_header;
 use codex_client::with_chatgpt_cloudflare_cookie_store;
 use codex_exec_server_protocol::JSONRPCErrorError;
@@ -16,10 +17,21 @@ use futures::FutureExt;
 use futures::StreamExt;
 use futures::future::BoxFuture;
 use reqwest::Method;
+use reqwest::StatusCode;
 use reqwest::Url;
+use reqwest::header::AUTHORIZATION;
+use reqwest::header::CONTENT_ENCODING;
+use reqwest::header::CONTENT_LENGTH;
+use reqwest::header::CONTENT_TYPE;
+use reqwest::header::COOKIE;
 use reqwest::header::HeaderMap;
 use reqwest::header::HeaderName;
 use reqwest::header::HeaderValue;
+use reqwest::header::LOCATION;
+use reqwest::header::PROXY_AUTHORIZATION;
+use reqwest::header::REFERER;
+use reqwest::header::TRANSFER_ENCODING;
+use reqwest::header::WWW_AUTHENTICATE;
 
 use super::HttpResponseBodyStream;
 use super::response_body_stream::send_body_delta;
@@ -49,6 +61,7 @@ pub(crate) struct PendingReqwestHttpBodyStream {
 /// by the exec-server route and the local [`HttpClient`] backend.
 pub(crate) struct ReqwestHttpRequestRunner {
     client: reqwest::Client,
+    timeout_ms: Option<u64>,
 }
 
 impl ReqwestHttpClient {
@@ -59,6 +72,20 @@ impl ReqwestHttpClient {
                 reqwest::Client::builder().timeout(Duration::from_millis(timeout_ms))
             }
         };
+        build_reqwest_client_with_custom_ca(with_chatgpt_cloudflare_cookie_store(builder))
+            .map_err(|error| ExecServerError::HttpRequest(error.to_string()))
+    }
+
+    fn build_client_without_redirects(
+        timeout_ms: Option<u64>,
+    ) -> Result<reqwest::Client, ExecServerError> {
+        let builder = match timeout_ms {
+            None => reqwest::Client::builder(),
+            Some(timeout_ms) => {
+                reqwest::Client::builder().timeout(Duration::from_millis(timeout_ms))
+            }
+        }
+        .redirect(reqwest::redirect::Policy::none());
         build_reqwest_client_with_custom_ca(with_chatgpt_cloudflare_cookie_store(builder))
             .map_err(|error| ExecServerError::HttpRequest(error.to_string()))
     }
@@ -116,7 +143,7 @@ impl ReqwestHttpRequestRunner {
     pub(crate) fn new(timeout_ms: Option<u64>) -> Result<Self, JSONRPCErrorError> {
         let client = ReqwestHttpClient::build_client(timeout_ms)
             .map_err(|error| internal_error(error.to_string()))?;
-        Ok(Self { client })
+        Ok(Self { client, timeout_ms })
     }
 
     pub(crate) async fn run(
@@ -137,22 +164,13 @@ impl ReqwestHttpRequestRunner {
             }
         }
 
-        let mut headers = Self::build_headers(params.headers)?;
-        merge_chatgpt_cloudflare_cookie_header(&mut headers, &url);
-        let mut request = self.client.request(method.clone(), url).headers(headers);
-        if let Some(body) = params.body {
-            request = request.body(body.into_inner());
-        }
-
-        let response = match request.send().await {
-            Ok(response) => response,
-            Err(error) => {
-                let error_message = error.to_string();
-                log_send_error(&method, error);
-                return Err(internal_error(format!(
-                    "http/request failed: {error_message}"
-                )));
-            }
+        let headers = Self::build_headers(params.headers)?;
+        let body = params.body.map(crate::protocol::ByteChunk::into_inner);
+        let response = if should_refresh_chatgpt_cookies_on_redirects(&headers, &url) {
+            self.send_with_chatgpt_cookie_redirects(method.clone(), url, headers, body)
+                .await?
+        } else {
+            Self::send_once(&self.client, &method, url, headers, body.as_deref()).await?
         };
         let status = response.status().as_u16();
         let headers = Self::response_headers(response.headers());
@@ -185,6 +203,105 @@ impl ReqwestHttpRequestRunner {
             },
             None,
         ))
+    }
+
+    async fn send_with_chatgpt_cookie_redirects(
+        &self,
+        mut method: Method,
+        mut url: Url,
+        mut headers: HeaderMap,
+        mut body: Option<Vec<u8>>,
+    ) -> Result<reqwest::Response, JSONRPCErrorError> {
+        const MAX_REDIRECTS: usize = 10;
+
+        // Reqwest's public redirect policy can decide whether to follow but cannot mutate the next
+        // attempt's headers. Mirror its default redirect behavior here so explicit Cookie headers
+        // can be combined with the latest allowlisted Cloudflare cookies on every attempt.
+        let client = ReqwestHttpClient::build_client_without_redirects(self.timeout_ms)
+            .map_err(|error| internal_error(error.to_string()))?;
+        let mut redirect_count = 0;
+
+        loop {
+            let mut attempt_headers = headers.clone();
+            merge_chatgpt_cloudflare_cookie_header(&mut attempt_headers, &url);
+            let response = Self::send_once(
+                &client,
+                &method,
+                url.clone(),
+                attempt_headers,
+                body.as_deref(),
+            )
+            .await?;
+            let status = response.status();
+            if !matches!(
+                status,
+                StatusCode::MOVED_PERMANENTLY
+                    | StatusCode::FOUND
+                    | StatusCode::SEE_OTHER
+                    | StatusCode::TEMPORARY_REDIRECT
+                    | StatusCode::PERMANENT_REDIRECT
+            ) {
+                return Ok(response);
+            }
+
+            let Some(next_url) = redirect_url(&response)? else {
+                return Ok(response);
+            };
+            if redirect_count == MAX_REDIRECTS {
+                return Err(internal_error(
+                    "http/request failed: too many redirects".to_string(),
+                ));
+            }
+            redirect_count += 1;
+
+            match status {
+                StatusCode::MOVED_PERMANENTLY | StatusCode::FOUND if method == Method::POST => {
+                    method = Method::GET;
+                    body = None;
+                    drop_payload_headers(&mut headers);
+                }
+                StatusCode::SEE_OTHER => {
+                    if method != Method::HEAD {
+                        method = Method::GET;
+                    }
+                    body = None;
+                    drop_payload_headers(&mut headers);
+                }
+                StatusCode::MOVED_PERMANENTLY
+                | StatusCode::FOUND
+                | StatusCode::TEMPORARY_REDIRECT
+                | StatusCode::PERMANENT_REDIRECT => {}
+                _ => unreachable!("redirect statuses were checked above"),
+            }
+
+            remove_sensitive_headers_on_cross_host_redirect(&mut headers, &url, &next_url);
+            set_referer_header(&mut headers, &url, &next_url);
+            url = next_url;
+        }
+    }
+
+    async fn send_once(
+        client: &reqwest::Client,
+        method: &Method,
+        url: Url,
+        headers: HeaderMap,
+        body: Option<&[u8]>,
+    ) -> Result<reqwest::Response, JSONRPCErrorError> {
+        let mut request = client.request(method.clone(), url).headers(headers);
+        if let Some(body) = body {
+            request = request.body(body.to_vec());
+        }
+
+        match request.send().await {
+            Ok(response) => Ok(response),
+            Err(error) => {
+                let error_message = error.to_string();
+                log_send_error(method, error);
+                Err(internal_error(format!(
+                    "http/request failed: {error_message}"
+                )))
+            }
+        }
     }
 
     pub(crate) async fn stream_body(
@@ -273,6 +390,76 @@ impl ReqwestHttpRequestRunner {
                 })
             })
             .collect()
+    }
+}
+
+fn should_refresh_chatgpt_cookies_on_redirects(headers: &HeaderMap, url: &Url) -> bool {
+    url.scheme() == "https"
+        && url.host_str().is_some_and(is_allowed_chatgpt_host)
+        && headers.contains_key(COOKIE)
+}
+
+fn redirect_url(response: &reqwest::Response) -> Result<Option<Url>, JSONRPCErrorError> {
+    let Some(location) = response.headers().get(LOCATION) else {
+        return Ok(None);
+    };
+    let Ok(location) = location.to_str() else {
+        return Ok(None);
+    };
+    let Ok(next_url) = response.url().join(location) else {
+        return Ok(None);
+    };
+    if !matches!(next_url.scheme(), "http" | "https") {
+        return Err(internal_error(format!(
+            "http/request redirect has unsupported URL scheme: {}",
+            next_url.scheme()
+        )));
+    }
+    Ok(Some(next_url))
+}
+
+fn drop_payload_headers(headers: &mut HeaderMap) {
+    for header in [
+        CONTENT_TYPE,
+        CONTENT_LENGTH,
+        CONTENT_ENCODING,
+        TRANSFER_ENCODING,
+    ] {
+        headers.remove(header);
+    }
+}
+
+fn remove_sensitive_headers_on_cross_host_redirect(
+    headers: &mut HeaderMap,
+    previous_url: &Url,
+    next_url: &Url,
+) {
+    let cross_host = next_url.host_str() != previous_url.host_str()
+        || next_url.port_or_known_default() != previous_url.port_or_known_default();
+    if cross_host {
+        for header in [
+            AUTHORIZATION,
+            COOKIE,
+            HeaderName::from_static("cookie2"),
+            PROXY_AUTHORIZATION,
+            WWW_AUTHENTICATE,
+        ] {
+            headers.remove(header);
+        }
+    }
+}
+
+fn set_referer_header(headers: &mut HeaderMap, previous_url: &Url, next_url: &Url) {
+    if next_url.scheme() == "http" && previous_url.scheme() == "https" {
+        return;
+    }
+
+    let mut referer = previous_url.clone();
+    let _ = referer.set_username("");
+    let _ = referer.set_password(None);
+    referer.set_fragment(None);
+    if let Ok(referer) = HeaderValue::from_str(referer.as_str()) {
+        headers.insert(REFERER, referer);
     }
 }
 
