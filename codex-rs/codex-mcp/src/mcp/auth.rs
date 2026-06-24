@@ -6,7 +6,7 @@ use codex_config::McpServerTransportConfig;
 use codex_config::types::AuthKeyringBackendKind;
 use codex_config::types::OAuthCredentialsStoreMode;
 use codex_login::CodexAuth;
-use codex_protocol::protocol::McpAuthStatus;
+use codex_rmcp_client::McpAuthState;
 use codex_rmcp_client::OAuthProviderError;
 use codex_rmcp_client::determine_streamable_http_auth_status;
 use codex_rmcp_client::discover_streamable_http_oauth;
@@ -50,7 +50,7 @@ pub struct ResolvedMcpOAuthScopes {
 #[derive(Debug, Clone)]
 pub struct McpAuthStatusEntry {
     pub config: Option<McpServerConfig>,
-    pub auth_status: McpAuthStatus,
+    pub auth_state: McpAuthState,
 }
 
 pub async fn oauth_login_support(transport: &McpServerTransportConfig) -> McpOAuthLoginSupport {
@@ -153,7 +153,7 @@ where
                 )
             });
         async move {
-            let auth_status = match config.as_ref() {
+            let auth_state = match config.as_ref() {
                 Some(config) => {
                     match compute_auth_status(
                         &name,
@@ -169,16 +169,13 @@ where
                             warn!(
                                 "failed to determine auth status for MCP server `{name}`: {error:?}"
                             );
-                            McpAuthStatus::Unsupported
+                            McpAuthState::Unsupported
                         }
                     }
                 }
-                None => McpAuthStatus::Unsupported,
+                None => McpAuthState::Unsupported,
             };
-            let entry = McpAuthStatusEntry {
-                config,
-                auth_status,
-            };
+            let entry = McpAuthStatusEntry { config, auth_state };
             (name, entry)
         }
     });
@@ -192,17 +189,17 @@ async fn compute_auth_status(
     store_mode: OAuthCredentialsStoreMode,
     keyring_backend_kind: AuthKeyringBackendKind,
     has_runtime_auth: bool,
-) -> Result<McpAuthStatus> {
+) -> Result<McpAuthState> {
     if !config.enabled {
-        return Ok(McpAuthStatus::Unsupported);
+        return Ok(McpAuthState::Unsupported);
     }
 
     if has_runtime_auth {
-        return Ok(McpAuthStatus::BearerToken);
+        return Ok(McpAuthState::BearerToken);
     }
 
     match &config.transport {
-        McpServerTransportConfig::Stdio { .. } => Ok(McpAuthStatus::Unsupported),
+        McpServerTransportConfig::Stdio { .. } => Ok(McpAuthState::Unsupported),
         McpServerTransportConfig::StreamableHttp {
             url,
             bearer_token_env_var,

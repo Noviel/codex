@@ -30,7 +30,6 @@ use codex_protocol::ToolName;
 use codex_protocol::mcp::McpServerInfo;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::protocol::GranularApprovalConfig;
-use codex_protocol::protocol::McpAuthStatus;
 use futures::FutureExt;
 use pretty_assertions::assert_eq;
 use rmcp::model::CreateElicitationRequestParams;
@@ -1111,6 +1110,7 @@ async fn list_all_tools_uses_cached_tool_info_snapshot_when_client_startup_fails
     let failed_client = futures::future::ready::<Result<ManagedClient, StartupOutcomeError>>(Err(
         StartupOutcomeError::Failed {
             error: "startup failed".to_string(),
+            is_authentication_required: false,
         },
     ))
     .boxed()
@@ -1426,7 +1426,7 @@ fn mcp_init_error_display_prompts_for_github_pat() {
             oauth_resource: None,
             tools: HashMap::new(),
         }),
-        auth_status: McpAuthStatus::Unsupported,
+        auth_state: McpAuthState::Unsupported,
     };
     let err: StartupOutcomeError = anyhow::anyhow!("OAuth is unsupported").into();
 
@@ -1451,6 +1451,50 @@ fn mcp_init_error_display_prompts_for_login_when_auth_required() {
     );
 
     assert_eq!(expected, display);
+}
+
+#[test]
+fn mcp_startup_failure_reason_requires_existing_oauth_and_auth_failure() {
+    for (auth_state, is_authentication_required, expected) in [
+        (
+            Some(McpAuthState::LoggedOut(
+                McpLoginRequirement::Reauthentication,
+            )),
+            true,
+            Some(McpStartupFailureReason::ReauthenticationRequired),
+        ),
+        (
+            Some(McpAuthState::LoggedOut(
+                McpLoginRequirement::Reauthentication,
+            )),
+            false,
+            None,
+        ),
+        (
+            Some(McpAuthState::LoggedOut(McpLoginRequirement::Login)),
+            true,
+            None,
+        ),
+        (Some(McpAuthState::Unsupported), true, None),
+        (Some(McpAuthState::BearerToken), true, None),
+        (Some(McpAuthState::OAuth), true, None),
+        (None, true, None),
+    ] {
+        let entry = auth_state.map(|auth_state| McpAuthStatusEntry {
+            config: None,
+            auth_state,
+        });
+        let error = StartupOutcomeError::Failed {
+            error: "startup failed".to_string(),
+            is_authentication_required,
+        };
+
+        assert_eq!(
+            mcp_startup_failure_reason(entry.as_ref(), &error),
+            expected,
+            "auth_state={auth_state:?}, is_authentication_required={is_authentication_required}"
+        );
+    }
 }
 
 #[test]
@@ -1479,7 +1523,7 @@ fn mcp_init_error_display_reports_generic_errors() {
             oauth_resource: None,
             tools: HashMap::new(),
         }),
-        auth_status: McpAuthStatus::Unsupported,
+        auth_state: McpAuthState::Unsupported,
     };
     let err: StartupOutcomeError = anyhow::anyhow!("boom").into();
 

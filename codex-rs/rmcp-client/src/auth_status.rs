@@ -25,6 +25,31 @@ pub struct StreamableHttpOAuthDiscovery {
     pub scopes_supported: Option<Vec<String>>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum McpLoginRequirement {
+    Login,
+    Reauthentication,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum McpAuthState {
+    Unsupported,
+    LoggedOut(McpLoginRequirement),
+    BearerToken,
+    OAuth,
+}
+
+impl From<McpAuthState> for McpAuthStatus {
+    fn from(value: McpAuthState) -> Self {
+        match value {
+            McpAuthState::Unsupported => Self::Unsupported,
+            McpAuthState::LoggedOut(_) => Self::NotLoggedIn,
+            McpAuthState::BearerToken => Self::BearerToken,
+            McpAuthState::OAuth => Self::OAuth,
+        }
+    }
+}
+
 /// Determine the authentication status for a streamable HTTP MCP server.
 pub async fn determine_streamable_http_auth_status(
     server_name: &str,
@@ -34,32 +59,34 @@ pub async fn determine_streamable_http_auth_status(
     env_http_headers: Option<HashMap<String, String>>,
     store_mode: OAuthCredentialsStoreMode,
     keyring_backend_kind: AuthKeyringBackendKind,
-) -> Result<McpAuthStatus> {
+) -> Result<McpAuthState> {
     if bearer_token_env_var.is_some() {
-        return Ok(McpAuthStatus::BearerToken);
+        return Ok(McpAuthState::BearerToken);
     }
 
     let default_headers = build_default_headers(http_headers, env_http_headers)?;
     if default_headers.contains_key(AUTHORIZATION) {
-        return Ok(McpAuthStatus::BearerToken);
+        return Ok(McpAuthState::BearerToken);
     }
 
     match oauth_token_status(server_name, url, store_mode, keyring_backend_kind)? {
-        StoredOAuthTokenStatus::Usable => return Ok(McpAuthStatus::OAuth),
+        StoredOAuthTokenStatus::Usable => return Ok(McpAuthState::OAuth),
         StoredOAuthTokenStatus::AuthorizationRequired => {
-            return Ok(McpAuthStatus::NotLoggedIn);
+            return Ok(McpAuthState::LoggedOut(
+                McpLoginRequirement::Reauthentication,
+            ));
         }
         StoredOAuthTokenStatus::Missing => {}
     }
 
     match discover_streamable_http_oauth_with_headers(url, &default_headers).await {
-        Ok(Some(_)) => Ok(McpAuthStatus::NotLoggedIn),
-        Ok(None) => Ok(McpAuthStatus::Unsupported),
+        Ok(Some(_)) => Ok(McpAuthState::LoggedOut(McpLoginRequirement::Login)),
+        Ok(None) => Ok(McpAuthState::Unsupported),
         Err(error) => {
             debug!(
                 "failed to detect OAuth support for MCP server `{server_name}` at {url}: {error:?}"
             );
-            Ok(McpAuthStatus::Unsupported)
+            Ok(McpAuthState::Unsupported)
         }
     }
 }
@@ -222,7 +249,7 @@ mod tests {
         .await
         .expect("status should compute");
 
-        assert_eq!(status, McpAuthStatus::BearerToken);
+        assert_eq!(status, McpAuthState::BearerToken);
     }
 
     #[tokio::test]
@@ -244,7 +271,7 @@ mod tests {
         .await
         .expect("status should compute");
 
-        assert_eq!(status, McpAuthStatus::BearerToken);
+        assert_eq!(status, McpAuthState::BearerToken);
     }
 
     #[tokio::test]
