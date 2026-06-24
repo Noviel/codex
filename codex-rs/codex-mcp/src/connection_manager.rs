@@ -872,10 +872,7 @@ impl Drop for McpConnectionManager {
     }
 }
 
-fn should_share_codex_apps_tools_cache(
-    server_name: &str,
-    uses_env_bearer_token: bool,
-) -> bool {
+fn should_share_codex_apps_tools_cache(server_name: &str, uses_env_bearer_token: bool) -> bool {
     server_name == CODEX_APPS_MCP_SERVER_NAME && !uses_env_bearer_token
 }
 
