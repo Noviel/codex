@@ -14,6 +14,7 @@ use codex_protocol::protocol::GitInfo;
 use codex_protocol::protocol::MultiAgentVersion;
 use codex_protocol::protocol::RolloutItem;
 use codex_protocol::protocol::SessionSource;
+use codex_protocol::protocol::ThreadHistoryMode;
 use codex_protocol::protocol::ThreadMemoryMode as MemoryMode;
 use codex_protocol::protocol::ThreadSource;
 use codex_protocol::protocol::TokenUsage;
@@ -87,6 +88,8 @@ pub struct CreateThreadParams {
     pub dynamic_tools: Vec<DynamicToolSpec>,
     /// Multi-agent runtime selected when the thread was created.
     pub multi_agent_version: Option<MultiAgentVersion>,
+    /// Persisted thread history contract selected when the thread was created.
+    pub history_mode: ThreadHistoryMode,
     /// Initial context-window identity captured when the thread was created.
     pub initial_window_id: String,
     /// Metadata captured for the newly created thread.
@@ -426,6 +429,8 @@ pub struct StoredThread {
     pub cli_version: String,
     /// Runtime source for the thread.
     pub source: SessionSource,
+    /// Persisted thread history contract selected when this thread was created.
+    pub history_mode: ThreadHistoryMode,
     /// Optional analytics source classification for this thread.
     pub thread_source: Option<ThreadSource>,
     /// Optional random nickname for thread-spawn sub-agents.
@@ -573,6 +578,8 @@ pub struct ThreadMetadataPatch {
     pub git_info: Option<GitInfoPatch>,
     /// Thread memory behavior.
     pub memory_mode: Option<MemoryMode>,
+    /// Persisted thread history contract.
+    pub history_mode: Option<ThreadHistoryMode>,
 }
 
 impl ThreadMetadataPatch {
@@ -653,6 +660,9 @@ impl ThreadMetadataPatch {
         if next.memory_mode.is_some() {
             self.memory_mode = next.memory_mode;
         }
+        if next.history_mode.is_some() {
+            self.history_mode = next.history_mode;
+        }
     }
 
     pub fn is_empty(&self) -> bool {
@@ -679,6 +689,7 @@ impl ThreadMetadataPatch {
             && self.first_user_message.is_none()
             && self.git_info.is_none()
             && self.memory_mode.is_none()
+            && self.history_mode.is_none()
     }
 }
 

@@ -2,6 +2,8 @@ use super::LocalThreadStore;
 use crate::CreateThreadParams;
 use crate::ThreadStoreError;
 use crate::ThreadStoreResult;
+use crate::error::PAGINATED_THREADS_UNSUPPORTED_OPERATION;
+use codex_protocol::protocol::ThreadHistoryMode;
 use codex_protocol::protocol::ThreadMemoryMode;
 use codex_rollout::RolloutConfig;
 use codex_rollout::RolloutRecorder;
@@ -11,6 +13,11 @@ pub(super) async fn create_thread(
     store: &LocalThreadStore,
     params: CreateThreadParams,
 ) -> ThreadStoreResult<RolloutRecorder> {
+    if matches!(params.history_mode, ThreadHistoryMode::Paginated) {
+        return Err(ThreadStoreError::Unsupported {
+            operation: PAGINATED_THREADS_UNSUPPORTED_OPERATION,
+        });
+    }
     let cwd = params
         .metadata
         .cwd
@@ -39,6 +46,7 @@ pub(super) async fn create_thread(
         )
         .with_session_id(params.session_id)
         .with_multi_agent_version(params.multi_agent_version)
+        .with_history_mode(params.history_mode)
         .with_initial_window_id(params.initial_window_id),
     )
     .await

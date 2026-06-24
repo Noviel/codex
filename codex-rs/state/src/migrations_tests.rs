@@ -131,6 +131,70 @@ INSERT INTO threads (
 }
 
 #[tokio::test]
+async fn history_mode_migration_backfills_legacy_rows() {
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .expect("in-memory database should open");
+    migrator_through(/*version*/ 39)
+        .run(&pool)
+        .await
+        .expect("pre-history-mode migrations should apply");
+
+    sqlx::query(
+        r#"
+INSERT INTO threads (
+    id,
+    rollout_path,
+    created_at,
+    updated_at,
+    created_at_ms,
+    updated_at_ms,
+    recency_at,
+    recency_at_ms,
+    source,
+    model_provider,
+    cwd,
+    title,
+    sandbox_policy,
+    approval_mode
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        "#,
+    )
+    .bind("00000000-0000-0000-0000-000000000001")
+    .bind("/tmp/first.jsonl")
+    .bind(1_700_000_000_i64)
+    .bind(1_700_000_100_i64)
+    .bind(1_700_000_000_123_i64)
+    .bind(1_700_000_100_456_i64)
+    .bind(1_700_000_100_i64)
+    .bind(1_700_000_100_456_i64)
+    .bind("cli")
+    .bind("openai")
+    .bind("/tmp")
+    .bind("")
+    .bind("read-only")
+    .bind("on-request")
+    .execute(&pool)
+    .await
+    .expect("legacy row should insert");
+
+    STATE_MIGRATOR
+        .run(&pool)
+        .await
+        .expect("history mode migration should apply");
+
+    let history_mode: String =
+        sqlx::query_scalar("SELECT history_mode FROM threads WHERE id = ?")
+            .bind("00000000-0000-0000-0000-000000000001")
+            .fetch_one(&pool)
+            .await
+            .expect("backfilled row should load");
+    assert_eq!(history_mode, "legacy");
+}
+
+#[tokio::test]
 async fn repairs_recency_migration_that_was_applied_as_version_38() {
     let pool = SqlitePoolOptions::new()
         .max_connections(1)

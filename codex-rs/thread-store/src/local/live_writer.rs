@@ -1,6 +1,8 @@
 use std::path::PathBuf;
 
 use codex_protocol::ThreadId;
+use codex_protocol::protocol::RolloutItem;
+use codex_protocol::protocol::ThreadHistoryMode;
 use codex_protocol::protocol::ThreadMemoryMode;
 use codex_rollout::RolloutConfig;
 use codex_rollout::RolloutRecorder;
@@ -16,6 +18,7 @@ use crate::ReadThreadParams;
 use crate::ResumeThreadParams;
 use crate::ThreadStoreError;
 use crate::ThreadStoreResult;
+use crate::error::PAGINATED_THREADS_UNSUPPORTED_OPERATION;
 
 const ROLLOUT_SIZE_BYTES_METRIC: &str = "codex.rollout.size_bytes";
 
@@ -34,6 +37,34 @@ pub(super) async fn resume_thread(
     params: ResumeThreadParams,
 ) -> ThreadStoreResult<()> {
     store.ensure_live_recorder_absent(params.thread_id).await?;
+    let history_mode = if let Some(history) = params.history.as_deref() {
+        history_mode_from_items(history)
+    } else if let Some(rollout_path) = params.rollout_path.as_ref() {
+        super::read_thread::read_thread_by_rollout_path(
+            store,
+            rollout_path.clone(),
+            params.include_archived,
+            /*include_history*/ false,
+        )
+        .await?
+        .history_mode
+    } else {
+        super::read_thread::read_thread(
+            store,
+            ReadThreadParams {
+                thread_id: params.thread_id,
+                include_archived: params.include_archived,
+                include_history: false,
+            },
+        )
+        .await?
+        .history_mode
+    };
+    if matches!(history_mode, ThreadHistoryMode::Paginated) {
+        return Err(ThreadStoreError::Unsupported {
+            operation: PAGINATED_THREADS_UNSUPPORTED_OPERATION,
+        });
+    }
     let rollout_path = match (params.rollout_path, params.history) {
         (Some(rollout_path), _history) => rollout_path,
         (None, history) => {
@@ -74,6 +105,21 @@ pub(super) async fn resume_thread(
             message: format!("failed to resume local thread recorder: {err}"),
         })?;
     store.insert_live_recorder(params.thread_id, recorder).await
+}
+
+fn history_mode_from_items(items: &[RolloutItem]) -> ThreadHistoryMode {
+    items
+        .iter()
+        .find_map(|item| match item {
+            RolloutItem::SessionMeta(meta_line) => Some(meta_line.meta.history_mode),
+            RolloutItem::ResponseItem(_)
+            | RolloutItem::Compacted(_)
+            | RolloutItem::TurnContext(_)
+            | RolloutItem::EventMsg(_)
+            | RolloutItem::InterAgentCommunication(_)
+            | RolloutItem::InterAgentCommunicationMetadata { .. } => None,
+        })
+        .unwrap_or_default()
 }
 
 #[tracing::instrument(
