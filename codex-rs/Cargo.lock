@@ -3365,17 +3365,13 @@ dependencies = [
  "codex-config",
  "codex-core",
  "codex-core-plugins",
- "codex-exec-server",
  "codex-extension-api",
  "codex-features",
  "codex-login",
  "codex-mcp",
- "codex-protocol",
- "codex-utils-path-uri",
  "pretty_assertions",
  "tempfile",
  "tokio",
- "tracing",
 ]
 
 [[package]]
