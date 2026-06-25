@@ -694,12 +694,14 @@ async fn environment_tools_follow_the_step_context() {
         turn.config.include_skill_instructions,
     )];
     turn.environments.turn_environments.clear();
+    let turn = Arc::new(turn);
     let step_context = Arc::new(StepContext::new(
-        Arc::new(turn),
+        Arc::clone(&turn),
         environments,
         Vec::new(),
         skills,
         extension_world_state,
+        crate::session::McpRuntimeSnapshot::new_uninitialized_for_test(&turn.config),
         /*loaded_agents_md*/ None,
     ));
 

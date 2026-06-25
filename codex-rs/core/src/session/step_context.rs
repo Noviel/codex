@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use crate::agents_md::LoadedAgentsMd;
 use crate::environment_selection::TurnEnvironmentSnapshot;
+use crate::session::McpRuntimeSnapshot;
 use crate::session::turn_context::TurnContext;
 use codex_context_fragments::WorldStateSectionContribution;
 use codex_core_skills::SkillsSnapshot;
@@ -18,6 +19,8 @@ pub(crate) struct StepContext {
     pub(crate) skills: Arc<SkillsSnapshot>,
     /// Extension-owned model-visible sections captured from the same step state.
     pub(crate) extension_world_state: Vec<WorldStateSectionContribution>,
+    /// The exact MCP config and manager used to advertise and execute tools for this step.
+    pub(crate) mcp: Arc<McpRuntimeSnapshot>,
     /// The canonical AGENTS.md value observed with this environment snapshot.
     pub(crate) loaded_agents_md: Option<Arc<LoadedAgentsMd>>,
 }
@@ -29,6 +32,7 @@ impl StepContext {
         selected_capability_roots: Vec<ResolvedSelectedCapabilityRoot>,
         skills: Arc<SkillsSnapshot>,
         extension_world_state: Vec<WorldStateSectionContribution>,
+        mcp: Arc<McpRuntimeSnapshot>,
         loaded_agents_md: Option<Arc<LoadedAgentsMd>>,
     ) -> Self {
         Self {
@@ -37,6 +41,7 @@ impl StepContext {
             selected_capability_roots,
             skills,
             extension_world_state,
+            mcp,
             loaded_agents_md,
         }
     }
