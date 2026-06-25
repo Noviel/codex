@@ -103,6 +103,7 @@ pub(crate) async fn run_codex_thread_interactive(
         forked_from_thread_id,
         parent_thread_id: Some(parent_session.thread_id),
         thread_source: Some(ThreadSource::Subagent),
+        originator: parent_ctx.originator.clone(),
         agent_control: parent_session.services.agent_control.clone(),
         dynamic_tools: Vec::new(),
         metrics_service_name: None,
@@ -122,7 +123,6 @@ pub(crate) async fn run_codex_thread_interactive(
         attestation_provider: parent_session.services.attestation_provider.clone(),
         external_time_provider: Some(Arc::clone(&parent_session.services.time_provider)),
         inherited_multi_agent_version: Some(MultiAgentVersion::Disabled),
-        initial_multi_agent_mode: None,
     }))
     .or_cancel(&cancel_token)
     .await??;

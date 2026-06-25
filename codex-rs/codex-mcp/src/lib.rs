@@ -46,7 +46,7 @@ pub use mcp::hosted_plugin_runtime_mcp_server_config;
 pub use mcp::tool_plugin_provenance;
 pub use plugin_config::PluginMcpConfigParseOutcome;
 pub use plugin_config::PluginMcpServerParseError;
-pub use plugin_config::PluginMcpServerPlacement;
+pub use plugin_config::parse_executor_plugin_mcp_config;
 pub use plugin_config::parse_plugin_mcp_config;
 
 pub use mcp::McpServerStatusSnapshot;
@@ -61,7 +61,9 @@ pub use mcp::McpOAuthScopesSource;
 pub use mcp::ResolvedMcpOAuthScopes;
 pub use mcp::compute_auth_statuses;
 pub use mcp::discover_supported_scopes;
+pub use mcp::discover_supported_scopes_with_http_client;
 pub use mcp::oauth_login_support;
+pub use mcp::oauth_login_support_with_http_client;
 pub use mcp::resolve_oauth_scopes;
 pub use mcp::should_retry_without_scopes;
 

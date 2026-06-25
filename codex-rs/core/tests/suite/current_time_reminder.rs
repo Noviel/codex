@@ -1,11 +1,14 @@
 use std::sync::Arc;
 use std::sync::atomic::AtomicI64;
+use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
+use std::time::Duration;
 
 use anyhow::Result;
 use anyhow::anyhow;
 use chrono::DateTime;
 use chrono::Utc;
+use codex_core::SleepFuture;
 use codex_core::TimeFuture;
 use codex_core::TimeProvider;
 use codex_core::config::CurrentTimeReminderConfig;
@@ -37,23 +40,36 @@ use serde_json::json;
 
 const FIRST_REMINDER: &str = "It is 2026-06-17 17:34:15 UTC.";
 const SECOND_REMINDER: &str = "It is 2026-06-17 17:35:15 UTC.";
+const THIRD_REMINDER: &str = "It is 2026-06-17 17:36:15 UTC.";
 const FIRST_TIME_UNIX_SECONDS: i64 = 1_781_717_655;
 
-struct TestTimeProvider(AtomicI64);
+struct TestTimeProvider {
+    current_time: AtomicI64,
+    sleep_seconds: AtomicU64,
+}
 
 impl Default for TestTimeProvider {
     fn default() -> Self {
-        Self(AtomicI64::new(FIRST_TIME_UNIX_SECONDS))
+        Self {
+            current_time: AtomicI64::new(FIRST_TIME_UNIX_SECONDS),
+            sleep_seconds: AtomicU64::new(0),
+        }
     }
 }
 
 impl TimeProvider for TestTimeProvider {
     fn current_time(&self, _thread_id: ThreadId) -> TimeFuture<'_> {
-        let timestamp = self.0.fetch_add(60, Ordering::Relaxed);
+        let timestamp = self.current_time.fetch_add(60, Ordering::Relaxed);
         Box::pin(async move {
             Ok(DateTime::<Utc>::from_timestamp(timestamp, 0)
                 .expect("test timestamp should be valid"))
         })
+    }
+
+    fn sleep(&self, _thread_id: ThreadId, duration: Duration) -> SleepFuture<'_> {
+        self.sleep_seconds
+            .store(duration.as_secs(), Ordering::Relaxed);
+        Box::pin(async { Ok(()) })
     }
 }
 
@@ -61,6 +77,10 @@ struct FailingTimeProvider;
 
 impl TimeProvider for FailingTimeProvider {
     fn current_time(&self, _thread_id: ThreadId) -> TimeFuture<'_> {
+        Box::pin(async { Err(anyhow!("test clock unavailable")) })
+    }
+
+    fn sleep(&self, _thread_id: ThreadId, _duration: Duration) -> SleepFuture<'_> {
         Box::pin(async { Err(anyhow!("test clock unavailable")) })
     }
 }
@@ -83,13 +103,14 @@ fn enable_current_time_reminder(
         .enable(Feature::CurrentTimeReminder)
         .expect("test config should allow current-time reminders");
     config.current_time_reminder = Some(CurrentTimeReminderConfig {
-        reminder_interval_model_requests: interval,
+        reminder_interval_seconds: interval,
         clock_source,
+        ..CurrentTimeReminderConfig::default()
     });
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn current_time_reminders_follow_request_interval_and_persist_in_history() -> Result<()> {
+async fn current_time_reminders_follow_time_interval_and_persist_in_history() -> Result<()> {
     skip_if_no_network!(Ok(()));
 
     let server = start_mock_server().await;
@@ -120,7 +141,7 @@ async fn current_time_reminders_follow_request_interval_and_persist_in_history()
     .await;
     let test = test_codex()
         .with_config(|config| {
-            enable_current_time_reminder(config, /*interval*/ 2, CurrentTimeSource::External)
+            enable_current_time_reminder(config, /*interval*/ 120, CurrentTimeSource::External)
         })
         .with_external_time_provider(Arc::new(TestTimeProvider::default()))
         .build(&server)
@@ -136,7 +157,7 @@ async fn current_time_reminders_follow_request_interval_and_persist_in_history()
     assert_eq!(current_time_reminders(&requests[1]), vec![FIRST_REMINDER]);
     assert_eq!(
         current_time_reminders(&requests[2]),
-        vec![FIRST_REMINDER, SECOND_REMINDER]
+        vec![FIRST_REMINDER, THIRD_REMINDER]
     );
     Ok(())
 }
@@ -195,7 +216,11 @@ async fn current_time_reminder_is_refreshed_after_compaction() -> Result<()> {
     let test = test_codex()
         .with_config(move |config| {
             config.model_provider = model_provider;
-            enable_current_time_reminder(config, /*interval*/ 50, CurrentTimeSource::External);
+            enable_current_time_reminder(
+                config,
+                /*interval*/ 3_000,
+                CurrentTimeSource::External,
+            );
         })
         .with_external_time_provider(Arc::new(TestTimeProvider::default()))
         .build(&server)
@@ -296,7 +321,11 @@ async fn current_time_tool_returns_the_latest_time() -> Result<()> {
     .await;
     let test = test_codex()
         .with_config(|config| {
-            enable_current_time_reminder(config, /*interval*/ 50, CurrentTimeSource::External)
+            enable_current_time_reminder(
+                config,
+                /*interval*/ 3_000,
+                CurrentTimeSource::External,
+            )
         })
         .with_external_time_provider(Arc::new(TestTimeProvider::default()))
         .build(&server)
@@ -312,6 +341,70 @@ async fn current_time_tool_returns_the_latest_time() -> Result<()> {
     assert_eq!(
         requests[1].function_call_output_text(CALL_ID),
         Some(SECOND_REMINDER.to_string())
+    );
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn sleep_tool_uses_configured_time_provider() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    const CALL_ID: &str = "sleep";
+    const DURATION_MS: u64 = 12 * 60 * 60 * 1000;
+
+    let server = start_mock_server().await;
+    let responses = mount_sse_sequence(
+        &server,
+        vec![
+            sse(vec![
+                ev_response_created("resp-1"),
+                ev_function_call_with_namespace(
+                    CALL_ID,
+                    "clock",
+                    "sleep",
+                    &json!({ "duration_ms": DURATION_MS }).to_string(),
+                ),
+                ev_completed("resp-1"),
+            ]),
+            sse(vec![
+                ev_response_created("resp-2"),
+                ev_assistant_message("msg-2", "done"),
+                ev_completed("resp-2"),
+            ]),
+        ],
+    )
+    .await;
+    let time_provider = Arc::new(TestTimeProvider::default());
+    let test = test_codex()
+        .with_config(|config| {
+            enable_current_time_reminder(
+                config,
+                /*interval*/ 3_000,
+                CurrentTimeSource::External,
+            );
+            config
+                .current_time_reminder
+                .as_mut()
+                .expect("current-time reminder config should be present")
+                .sleep_tool = true;
+        })
+        .with_external_time_provider(time_provider.clone())
+        .build(&server)
+        .await?;
+
+    test.submit_turn("sleep").await?;
+
+    assert_eq!(
+        time_provider.sleep_seconds.load(Ordering::Relaxed),
+        DURATION_MS / 1_000
+    );
+    let requests = responses.requests();
+    assert_eq!(requests.len(), 2);
+    assert!(
+        requests[1]
+            .function_call_output_text(CALL_ID)
+            .is_some_and(|output| output.ends_with("Sleep completed."))
     );
 
     Ok(())

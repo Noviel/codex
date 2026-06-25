@@ -202,7 +202,7 @@ async fn initialize_opt_out_notification_methods_filters_notifications() -> Resu
     let server = create_mock_responses_server_sequence_unchecked(responses).await;
     let codex_home = TempDir::new()?;
     create_config_toml(codex_home.path(), &server.uri(), "never")?;
-    let mut mcp = TestAppServer::new(codex_home.path()).await?;
+    let mut mcp = TestAppServer::new_with_auto_env(codex_home.path()).await?;
 
     let message = timeout(
         DEFAULT_READ_TIMEOUT,
@@ -227,7 +227,7 @@ async fn initialize_opt_out_notification_methods_filters_notifications() -> Resu
     };
 
     let request_id = mcp
-        .send_thread_start_request(ThreadStartParams::default())
+        .send_thread_start_request_with_auto_env(ThreadStartParams::default())
         .await?;
     let response = timeout(DEFAULT_READ_TIMEOUT, async {
         loop {
@@ -286,7 +286,7 @@ async fn turn_start_notify_payload_includes_initialize_client_name() -> Result<(
         ),
     )?;
 
-    let mut mcp = TestAppServer::new(codex_home.path()).await?;
+    let mut mcp = TestAppServer::new_with_auto_env(codex_home.path()).await?;
     timeout(
         DEFAULT_READ_TIMEOUT,
         mcp.initialize_with_client_info(ClientInfo {
@@ -298,7 +298,7 @@ async fn turn_start_notify_payload_includes_initialize_client_name() -> Result<(
     .await??;
 
     let thread_req = mcp
-        .send_thread_start_request(ThreadStartParams::default())
+        .send_thread_start_request_with_auto_env(ThreadStartParams::default())
         .await?;
     let thread_resp: JSONRPCResponse = timeout(
         DEFAULT_READ_TIMEOUT,

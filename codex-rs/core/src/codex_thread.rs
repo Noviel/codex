@@ -8,7 +8,6 @@ use codex_otel::SessionTelemetry;
 use codex_protocol::ThreadId;
 use codex_protocol::config_types::ApprovalsReviewer;
 use codex_protocol::config_types::CollaborationMode;
-use codex_protocol::config_types::MultiAgentMode;
 use codex_protocol::config_types::Personality;
 use codex_protocol::config_types::ReasoningSummary;
 use codex_protocol::config_types::WindowsSandboxLevel;
@@ -72,11 +71,11 @@ pub struct ThreadConfigSnapshot {
     pub reasoning_summary: Option<ReasoningSummary>,
     pub personality: Option<Personality>,
     pub collaboration_mode: CollaborationMode,
-    pub multi_agent_mode: Option<MultiAgentMode>,
     pub session_source: SessionSource,
     pub forked_from_thread_id: Option<ThreadId>,
     pub parent_thread_id: Option<ThreadId>,
     pub thread_source: Option<ThreadSource>,
+    pub originator: String,
 }
 
 /// Explains why `CodexThread::try_start_turn_if_idle` rejected an automatic
@@ -153,7 +152,6 @@ pub struct CodexThreadSettingsOverrides {
     pub summary: Option<ReasoningSummary>,
     pub service_tier: Option<Option<String>>,
     pub collaboration_mode: Option<CollaborationMode>,
-    pub multi_agent_mode: Option<MultiAgentMode>,
     pub personality: Option<Personality>,
 }
 
@@ -374,7 +372,6 @@ impl CodexThread {
             summary,
             service_tier,
             collaboration_mode,
-            multi_agent_mode,
             personality,
         } = overrides;
         let collaboration_mode = if let Some(collaboration_mode) = collaboration_mode {
@@ -398,7 +395,6 @@ impl CodexThread {
             active_permission_profile,
             windows_sandbox_level,
             collaboration_mode: Some(collaboration_mode),
-            multi_agent_mode,
             reasoning_summary: summary,
             service_tier,
             personality,
@@ -452,7 +448,7 @@ impl CodexThread {
             role: "user".to_string(),
             content: vec![ContentItem::InputText { text: message }],
             phase: None,
-            metadata: None,
+            internal_chat_message_metadata_passthrough: None,
         };
         self.codex
             .session
@@ -470,9 +466,15 @@ impl CodexThread {
 
         let turn_context = self.codex.session.new_default_turn().await;
         if self.codex.session.reference_context_item().await.is_none() {
+            // This history-only API runs without run_turn, so it owns its initial step.
+            let step_context = self
+                .codex
+                .session
+                .capture_step_context(Arc::clone(&turn_context))
+                .await;
             self.codex
                 .session
-                .record_context_updates_and_set_reference_context_item(turn_context.as_ref())
+                .record_context_updates_and_set_reference_context_item(step_context.as_ref())
                 .await;
         }
         self.codex
