@@ -6,6 +6,7 @@
 //! `tty=true`. The helpers are not tied to the IPC layer and can be reused by other
 //! Windows sandbox flows that need a PTY.
 
+use crate::command_resolution::resolve_windows_launch;
 use crate::desktop::LaunchDesktop;
 use crate::proc_thread_attr::ProcThreadAttributeList;
 use crate::process::WindowsProcessLaunch;
@@ -100,10 +101,14 @@ pub fn spawn_conpty_process_as_user(
     use_private_desktop: bool,
     logs_base_dir: Option<&Path>,
 ) -> Result<(PROCESS_INFORMATION, ConptyInstance)> {
-    let launch = WindowsProcessLaunch {
-        application_path: None,
-        command: argv.to_vec(),
-    };
+    let launch = resolve_windows_launch(
+        WindowsProcessLaunch {
+            application_path: None,
+            command: argv.to_vec(),
+        },
+        cwd,
+        env_map,
+    )?;
     spawn_conpty_process_as_user_with_launch(
         h_token,
         &launch,

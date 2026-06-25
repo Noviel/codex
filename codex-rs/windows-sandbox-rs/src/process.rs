@@ -1,3 +1,4 @@
+use crate::command_resolution::resolve_windows_launch;
 use crate::desktop::LaunchDesktop;
 use crate::logging;
 use crate::proc_thread_attr::ProcThreadAttributeList;
@@ -240,10 +241,14 @@ pub unsafe fn create_process_as_user(
     stdio: Option<(HANDLE, HANDLE, HANDLE)>,
     use_private_desktop: bool,
 ) -> Result<CreatedProcess> {
-    let launch = WindowsProcessLaunch {
-        application_path: None,
-        command: argv.to_vec(),
-    };
+    let launch = resolve_windows_launch(
+        WindowsProcessLaunch {
+            application_path: None,
+            command: argv.to_vec(),
+        },
+        cwd,
+        env_map,
+    )?;
     create_process_as_user_with_launch(
         h_token,
         CreateProcessAsUserRequest {
@@ -293,10 +298,14 @@ pub fn spawn_process_with_pipes(
     use_private_desktop: bool,
     logs_base_dir: Option<&Path>,
 ) -> Result<PipeSpawnHandles> {
-    let launch = WindowsProcessLaunch {
-        application_path: None,
-        command: argv.to_vec(),
-    };
+    let launch = resolve_windows_launch(
+        WindowsProcessLaunch {
+            application_path: None,
+            command: argv.to_vec(),
+        },
+        cwd,
+        env_map,
+    )?;
     spawn_process_with_pipes_with_launch(
         h_token,
         &launch,
