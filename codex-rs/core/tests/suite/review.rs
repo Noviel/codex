@@ -715,6 +715,7 @@ async fn review_history_surfaces_in_parent_session() {
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await

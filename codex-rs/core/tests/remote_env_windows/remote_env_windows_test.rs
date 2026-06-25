@@ -142,6 +142,7 @@ async fn windows_exec_server_runs_with_native_shell_and_cwd() -> Result<()> {
                     final_output_json_schema: None,
                     responsesapi_client_metadata: None,
                     additional_context: Default::default(),
+                    headroom: None,
                     thread_settings: codex_protocol::protocol::ThreadSettingsOverrides {
                         environments: Some(environments),
                         approval_policy: Some(AskForApproval::Never),

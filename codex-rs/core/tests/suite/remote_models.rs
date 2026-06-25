@@ -161,6 +161,7 @@ async fn remote_models_config_context_window_override_clamps_to_max_context_wind
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -228,6 +229,7 @@ async fn remote_models_config_override_above_max_uses_max_context_window() -> Re
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -294,6 +296,7 @@ async fn remote_models_use_context_window_when_config_override_is_absent() -> Re
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -374,6 +377,7 @@ async fn remote_models_long_model_slug_is_sent_with_custom_reasoning() -> Result
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -424,6 +428,7 @@ async fn namespaced_model_slug_uses_catalog_metadata_without_fallback_warning() 
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -582,6 +587,7 @@ async fn remote_models_remote_model_uses_unified_exec() -> Result<()> {
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: codex_protocol::protocol::ThreadSettingsOverrides {
                 environments: Some(local_selections(cwd_path)),
                 approval_policy: Some(AskForApproval::Never),
@@ -810,6 +816,7 @@ async fn remote_models_apply_remote_base_instructions() -> Result<()> {
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: codex_protocol::protocol::ThreadSettingsOverrides {
                 environments: Some(local_selections(cwd_path)),
                 approval_policy: Some(AskForApproval::Never),

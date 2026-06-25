@@ -129,6 +129,7 @@ async fn copy_paste_local_image_persists_rollout_request_shape() -> anyhow::Resu
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: codex_protocol::protocol::ThreadSettingsOverrides {
                 environments: Some(local_selections(cwd.abs())),
                 approval_policy: Some(AskForApproval::Never),
@@ -228,6 +229,7 @@ async fn drag_drop_image_persists_rollout_request_shape() -> anyhow::Result<()> 
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: codex_protocol::protocol::ThreadSettingsOverrides {
                 environments: Some(local_selections(cwd.abs())),
                 approval_policy: Some(AskForApproval::Never),

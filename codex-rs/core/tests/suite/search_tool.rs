@@ -535,6 +535,7 @@ async fn tool_search_returns_deferred_tools_without_follow_up_tool_injection() -
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -952,6 +953,7 @@ async fn tool_search_returns_deferred_dynamic_tool_and_routes_follow_up_call() -
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -1262,6 +1264,7 @@ async fn tool_search_surfaced_mcp_tool_errors_are_returned_to_model() -> Result<
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -1585,6 +1588,7 @@ async fn tool_search_matches_dynamic_tools_by_name_description_namespace_and_sch
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;

@@ -2,6 +2,7 @@ use super::*;
 use codex_protocol::config_types::MultiAgentMode;
 use codex_protocol::protocol::AdditionalContextEntry as CoreAdditionalContextEntry;
 use codex_protocol::protocol::AdditionalContextKind as CoreAdditionalContextKind;
+use codex_protocol::protocol::HeadroomCompressionSettings;
 use codex_protocol::protocol::MultiAgentVersion;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::SubAgentSource;
@@ -46,6 +47,31 @@ fn map_additional_context(
             )
         })
         .collect()
+}
+
+fn validate_headroom_settings(
+    headroom: Option<HeadroomCompressionSettings>,
+) -> Result<Option<HeadroomCompressionSettings>, JSONRPCErrorError> {
+    let Some(headroom) = headroom else {
+        return Ok(None);
+    };
+    if !headroom.enabled {
+        return Ok(None);
+    }
+    let url = headroom
+        .base_url
+        .parse::<axum::http::Uri>()
+        .map_err(|_| invalid_params("headroom.baseUrl must be a valid URL"))?;
+    if !matches!(url.scheme_str(), Some("http" | "https")) || url.host().is_none() {
+        return Err(invalid_params("headroom.baseUrl must use http or https"));
+    }
+    if headroom.timeout_ms == 0 {
+        return Err(invalid_params("headroom.timeoutMs must be positive"));
+    }
+    if matches!(headroom.token_budget, Some(0)) {
+        return Err(invalid_params("headroom.tokenBudget must be positive"));
+    }
+    Ok(Some(headroom))
 }
 
 struct ThreadSettingsBuildParams {
@@ -435,6 +461,7 @@ impl TurnRequestProcessor {
             .collect();
         let client_user_message_id = params.client_user_message_id;
         let additional_context = map_additional_context(params.additional_context);
+        let headroom = validate_headroom_settings(params.headroom)?;
         let turn_has_input = !mapped_items.is_empty();
         let cwd = resolve_request_cwd(params.cwd)?;
         let environments = self
@@ -468,6 +495,7 @@ impl TurnRequestProcessor {
             final_output_json_schema: params.output_schema,
             responsesapi_client_metadata: params.responsesapi_client_metadata,
             additional_context,
+            headroom,
             thread_settings,
         };
         let turn_id = thread

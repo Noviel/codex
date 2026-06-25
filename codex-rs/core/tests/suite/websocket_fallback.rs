@@ -162,6 +162,7 @@ async fn websocket_fallback_hides_first_websocket_retry_stream_error() -> Result
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: codex_protocol::protocol::ThreadSettingsOverrides {
                 environments: Some(local_selections(cwd.abs())),
                 approval_policy: Some(AskForApproval::Never),

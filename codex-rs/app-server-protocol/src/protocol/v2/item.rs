@@ -384,6 +384,19 @@ pub enum ThreadItem {
     #[serde(rename_all = "camelCase")]
     #[ts(rename_all = "camelCase")]
     ContextCompaction { id: String },
+    #[serde(rename_all = "camelCase")]
+    #[ts(rename_all = "camelCase")]
+    HeadroomCompressionTrace {
+        id: String,
+        model: String,
+        base_url: String,
+        tokens_before: u64,
+        tokens_after: u64,
+        tokens_saved: u64,
+        compression_ratio: f64,
+        transforms_applied: Vec<String>,
+        duration_ms: u64,
+    },
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
@@ -423,7 +436,8 @@ impl ThreadItem {
             | ThreadItem::ImageGeneration { id, .. }
             | ThreadItem::EnteredReviewMode { id, .. }
             | ThreadItem::ExitedReviewMode { id, .. }
-            | ThreadItem::ContextCompaction { id, .. } => id,
+            | ThreadItem::ContextCompaction { id, .. }
+            | ThreadItem::HeadroomCompressionTrace { id, .. } => id,
         }
     }
 }
@@ -903,6 +917,17 @@ impl From<CoreTurnItem> for ThreadItem {
             CoreTurnItem::ContextCompaction(compaction) => {
                 ThreadItem::ContextCompaction { id: compaction.id }
             }
+            CoreTurnItem::HeadroomCompressionTrace(trace) => ThreadItem::HeadroomCompressionTrace {
+                id: trace.id,
+                model: trace.model,
+                base_url: trace.base_url,
+                tokens_before: trace.tokens_before,
+                tokens_after: trace.tokens_after,
+                tokens_saved: trace.tokens_saved,
+                compression_ratio: trace.compression_ratio,
+                transforms_applied: trace.transforms_applied,
+                duration_ms: trace.duration_ms,
+            },
         }
     }
 }

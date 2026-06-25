@@ -89,6 +89,7 @@ async fn submit_turn_with_approval_and_environments(
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: codex_protocol::protocol::ThreadSettingsOverrides {
                 environments: Some(turn_environment_selections),
                 approval_policy: Some(AskForApproval::OnRequest),

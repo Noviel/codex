@@ -223,6 +223,19 @@ fn fallback_transcript_cell(item: &ThreadItem) -> Option<PlainHistoryCell> {
         ThreadItem::ContextCompaction { .. } => {
             vec!["context compacted".dim().into()]
         }
+        ThreadItem::HeadroomCompressionTrace {
+            tokens_before,
+            tokens_after,
+            tokens_saved,
+            duration_ms,
+            ..
+        } => vec![
+            format!(
+                "Headroom: {tokens_before} -> {tokens_after} tokens, saved {tokens_saved} in {duration_ms} ms"
+            )
+            .dim()
+            .into(),
+        ],
         ThreadItem::UserMessage { .. }
         | ThreadItem::AgentMessage { .. }
         | ThreadItem::Plan { .. }

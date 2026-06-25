@@ -662,6 +662,7 @@ async fn submit_turn(
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: codex_protocol::protocol::ThreadSettingsOverrides {
                 environments: Some(local_selections(test.config.cwd.clone())),
                 approval_policy: Some(approval_policy),
@@ -2617,6 +2618,7 @@ async fn env_zsh_script_spawned_by_python_can_request_escalation_under_zsh_fork(
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: codex_protocol::protocol::ThreadSettingsOverrides {
                 environments: Some(local_selections(test.config.cwd.clone())),
                 approval_policy: Some(approval_policy),
@@ -2761,6 +2763,7 @@ async fn matched_prefix_rule_runs_unsandboxed_under_zsh_fork() -> Result<()> {
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: codex_protocol::protocol::ThreadSettingsOverrides {
                 environments: Some(local_selections(test.config.cwd.clone())),
                 approval_policy: Some(approval_policy),
@@ -3352,6 +3355,7 @@ allow_local_binding = true
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: codex_protocol::protocol::ThreadSettingsOverrides {
                 environments: Some(local_selections(test.config.cwd.clone())),
                 approval_policy: Some(approval_policy),

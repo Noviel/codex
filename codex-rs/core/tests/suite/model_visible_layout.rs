@@ -126,6 +126,7 @@ async fn snapshot_model_visible_layout_turn_overrides() -> Result<()> {
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: codex_protocol::protocol::ThreadSettingsOverrides {
                 environments: Some(local_selections(first_turn_cwd)),
                 approval_policy: Some(AskForApproval::Never),
@@ -161,6 +162,7 @@ async fn snapshot_model_visible_layout_turn_overrides() -> Result<()> {
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: codex_protocol::protocol::ThreadSettingsOverrides {
                 environments: Some(local_selections(preturn_context_diff_cwd)),
                 approval_policy: Some(AskForApproval::OnRequest),
@@ -252,6 +254,7 @@ async fn snapshot_model_visible_layout_cwd_change_does_not_refresh_agents() -> R
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: codex_protocol::protocol::ThreadSettingsOverrides {
                 environments: Some(local_selections(cwd_one.clone())),
                 approval_policy: Some(AskForApproval::Never),
@@ -285,6 +288,7 @@ async fn snapshot_model_visible_layout_cwd_change_does_not_refresh_agents() -> R
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: codex_protocol::protocol::ThreadSettingsOverrides {
                 environments: Some(local_selections(cwd_two)),
                 approval_policy: Some(AskForApproval::Never),
@@ -368,6 +372,7 @@ async fn snapshot_model_visible_layout_resume_with_personality_change() -> Resul
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -410,6 +415,7 @@ async fn snapshot_model_visible_layout_resume_with_personality_change() -> Resul
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: codex_protocol::protocol::ThreadSettingsOverrides {
                 environments: Some(local_selections(resume_override_cwd)),
                 approval_policy: Some(AskForApproval::Never),
@@ -483,6 +489,7 @@ async fn snapshot_model_visible_layout_resume_override_matches_rollout_model() -
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -525,6 +532,7 @@ async fn snapshot_model_visible_layout_resume_override_matches_rollout_model() -
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;

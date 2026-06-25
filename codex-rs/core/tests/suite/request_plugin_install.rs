@@ -152,6 +152,7 @@ async fn start_install_turn(test: &TestCodex, prompt: &str) -> Result<Elicitatio
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: ThreadSettingsOverrides {
                 approval_policy: Some(AskForApproval::Never),
                 sandbox_policy: Some(sandbox_policy),

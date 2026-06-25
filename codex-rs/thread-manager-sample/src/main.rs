@@ -310,6 +310,7 @@ async fn run_turn(thread: &CodexThread, thread_id: &str, prompt: String) -> anyh
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await

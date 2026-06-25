@@ -130,6 +130,7 @@ async fn response_body_for_remote_model(
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -280,6 +281,7 @@ async fn remote_multi_agent_selector_uses_model_selected_before_first_turn() -> 
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;

@@ -34,6 +34,7 @@ pub use protocol::v1::GitSha;
 pub use protocol::v1::InitializeCapabilities;
 pub use protocol::v1::InitializeParams;
 pub use protocol::v1::InitializeResponse;
+pub use protocol::v1::InitializeResponseCapabilities;
 pub use protocol::v1::InterruptConversationResponse;
 pub use protocol::v1::LoginApiKeyParams;
 pub use protocol::v1::SandboxSettings;

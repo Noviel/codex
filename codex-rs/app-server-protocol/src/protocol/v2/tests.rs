@@ -3783,6 +3783,7 @@ fn turn_start_params_preserve_explicit_null_service_tier() {
         summary: None,
         output_schema: None,
         collaboration_mode: None,
+        headroom: None,
         multi_agent_mode: None,
         personality: None,
     };

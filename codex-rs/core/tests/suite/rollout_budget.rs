@@ -235,6 +235,7 @@ async fn exhausted_budget_aborts_current_and_later_turns() -> Result<()> {
                 final_output_json_schema: None,
                 responsesapi_client_metadata: None,
                 additional_context: Default::default(),
+                headroom: None,
                 thread_settings: Default::default(),
             })
             .await?;

@@ -114,6 +114,7 @@ async fn refresh_models_on_models_etag_mismatch_and_avoid_duplicate_models_fetch
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: codex_protocol::protocol::ThreadSettingsOverrides {
                 environments: Some(local_selections(cwd_path)),
                 approval_policy: Some(AskForApproval::Never),

@@ -2637,6 +2637,7 @@ async fn fork_startup_context_then_first_turn_diff_snapshot() -> anyhow::Result<
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -2682,6 +2683,7 @@ async fn fork_startup_context_then_first_turn_diff_snapshot() -> anyhow::Result<
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: ThreadSettingsOverrides {
                 approval_policy: Some(AskForApproval::Never),
                 collaboration_mode: Some(collaboration_mode),
@@ -6212,6 +6214,7 @@ fn op_kind_for_input_and_context_ops() {
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         }
         .kind(),
@@ -6242,6 +6245,7 @@ async fn user_turn_updates_approvals_reviewer() {
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: codex_protocol::protocol::ThreadSettingsOverrides {
                 environments: Some(local_selections(config.cwd.clone())),
                 approval_policy: Some(config.permissions.approval_policy.value()),

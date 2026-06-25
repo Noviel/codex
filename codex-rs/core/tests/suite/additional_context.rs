@@ -59,6 +59,7 @@ async fn additional_context_is_model_visible_but_not_a_user_message_item() -> Re
                     },
                 ),
             ]),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -139,6 +140,7 @@ async fn external_context_like_user_text_remains_a_user_message_item() -> Result
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: BTreeMap::new(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -202,6 +204,7 @@ async fn additional_context_trust_controls_message_role() -> Result<()> {
                     },
                 ),
             ]),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -267,6 +270,7 @@ async fn additional_context_is_deduplicated_between_turns_while_retained() -> Re
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: additional_context.clone(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -284,6 +288,7 @@ async fn additional_context_is_deduplicated_between_turns_while_retained() -> Re
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context,
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -360,6 +365,7 @@ async fn additional_context_removes_one_value_while_adding_another() -> Result<(
                     },
                 ),
             ]),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -392,6 +398,7 @@ async fn additional_context_removes_one_value_while_adding_another() -> Result<(
                     },
                 ),
             ]),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -431,6 +438,7 @@ async fn additional_context_removes_one_value_while_adding_another() -> Result<(
                     },
                 ),
             ]),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -520,6 +528,7 @@ async fn additional_context_values_are_truncated_before_model_input() -> Result<
                     },
                 ),
             ]),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;

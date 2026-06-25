@@ -35,6 +35,7 @@ use codex_protocol::models::ContentItem;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::CompactedItem;
 use codex_protocol::protocol::EventMsg;
+use codex_protocol::protocol::ItemCompletedEvent;
 use codex_protocol::protocol::TokenUsage;
 use codex_protocol::protocol::TruncationPolicy;
 use codex_protocol::protocol::TurnStartedEvent;
@@ -45,6 +46,8 @@ use codex_utils_output_truncation::truncate_text;
 use futures::StreamExt;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
+
+use crate::turn_timing::now_unix_timestamp_ms;
 
 // Mirror the current /responses/compact retained-message default while the
 // server-side path remains the reference implementation.
@@ -348,7 +351,7 @@ async fn run_remote_compaction_request_v2(
         .min(MAX_REMOTE_COMPACTION_V2_STREAM_RETRIES);
     let mut retries = 0;
     loop {
-        let result = match client_session
+        let stream_result = client_session
             .stream(
                 prompt,
                 &turn_context.model_info,
@@ -358,9 +361,12 @@ async fn run_remote_compaction_request_v2(
                 turn_context.config.service_tier.clone(),
                 responses_metadata,
                 &InferenceTraceContext::disabled(),
+                turn_context.headroom.as_ref(),
             )
-            .await
-        {
+            .await;
+        emit_headroom_compression_traces(sess, turn_context, client_session).await;
+
+        let result = match stream_result {
             Ok(stream) => collect_compaction_output(stream).await,
             Err(err) => Err(err),
         };
@@ -381,6 +387,25 @@ async fn run_remote_compaction_request_v2(
                 .await?;
             }
         }
+    }
+}
+
+async fn emit_headroom_compression_traces(
+    sess: &Session,
+    turn_context: &TurnContext,
+    client_session: &mut ModelClientSession,
+) {
+    for trace in client_session.take_headroom_compression_traces() {
+        sess.send_event(
+            turn_context,
+            EventMsg::ItemCompleted(ItemCompletedEvent {
+                thread_id: sess.thread_id(),
+                turn_id: turn_context.sub_id.clone(),
+                item: TurnItem::HeadroomCompressionTrace(trace),
+                completed_at_ms: now_unix_timestamp_ms(),
+            }),
+        )
+        .await;
     }
 }
 

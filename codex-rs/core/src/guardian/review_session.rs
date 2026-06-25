@@ -767,6 +767,7 @@ async fn run_review_on_session(
             final_output_json_schema: Some(params.schema.clone()),
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: codex_protocol::protocol::ThreadSettingsOverrides {
                 environments: Some(codex_protocol::protocol::TurnEnvironmentSelections::new(
                     parent_turn_legacy_fallback_cwd,

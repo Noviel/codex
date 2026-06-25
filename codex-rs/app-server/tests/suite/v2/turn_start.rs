@@ -2581,6 +2581,7 @@ async fn turn_start_updates_sandbox_and_cwd_between_turns_v2() -> Result<()> {
             output_schema: None,
             collaboration_mode: None,
             multi_agent_mode: None,
+            headroom: None,
         })
         .await?;
     timeout(
@@ -2621,6 +2622,7 @@ async fn turn_start_updates_sandbox_and_cwd_between_turns_v2() -> Result<()> {
             output_schema: None,
             collaboration_mode: None,
             multi_agent_mode: None,
+            headroom: None,
         })
         .await?;
     timeout(

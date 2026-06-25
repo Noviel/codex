@@ -154,6 +154,7 @@ async fn submit_turn_with_timeout(test: &TestCodex, prompt: &str) -> Result<()> 
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: codex_protocol::protocol::ThreadSettingsOverrides {
                 environments: Some(local_selections(cwd)),
                 approval_policy: Some(AskForApproval::OnRequest),

@@ -674,6 +674,7 @@ async fn turn_start_jsonrpc_span_parents_core_turn_spans() -> Result<()> {
                     output_schema: None,
                     collaboration_mode: None,
                     multi_agent_mode: None,
+                    headroom: None,
                 },
             },
             Some(remote_trace),

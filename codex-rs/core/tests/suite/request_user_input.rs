@@ -151,6 +151,7 @@ async fn request_user_input_round_trip_for_mode(
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: codex_protocol::protocol::ThreadSettingsOverrides {
                 environments: Some(local_selections(cwd.abs())),
                 approval_policy: Some(AskForApproval::Never),
@@ -295,6 +296,7 @@ async fn request_user_input_interrupt_emits_deferred_token_count() -> anyhow::Re
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: codex_protocol::protocol::ThreadSettingsOverrides {
                 environments: Some(local_selections(cwd.abs())),
                 approval_policy: Some(AskForApproval::Never),
@@ -399,6 +401,7 @@ where
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: codex_protocol::protocol::ThreadSettingsOverrides {
                 environments: Some(local_selections(cwd.abs())),
                 approval_policy: Some(AskForApproval::Never),

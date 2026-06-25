@@ -81,6 +81,7 @@ fn disabled_user_turn(test: &TestCodex, items: Vec<UserInput>, model: String) ->
         final_output_json_schema: None,
         responsesapi_client_metadata: None,
         additional_context: Default::default(),
+        headroom: None,
         thread_settings: codex_protocol::protocol::ThreadSettingsOverrides {
             approval_policy: Some(AskForApproval::Never),
             sandbox_policy: Some(sandbox_policy),

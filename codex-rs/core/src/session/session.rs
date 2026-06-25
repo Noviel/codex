@@ -13,6 +13,7 @@ use codex_protocol::config_types::SERVICE_TIER_DEFAULT_REQUEST_VALUE;
 use codex_protocol::config_types::ServiceTier;
 use codex_protocol::permissions::FileSystemPath;
 use codex_protocol::permissions::FileSystemSpecialPath;
+use codex_protocol::protocol::HeadroomCompressionSettings;
 use codex_protocol::protocol::MultiAgentVersion;
 use codex_protocol::protocol::ThreadSource;
 use codex_protocol::protocol::TurnEnvironmentSelection;
@@ -431,6 +432,7 @@ pub(crate) struct SessionSettingsUpdate {
     pub(crate) reasoning_summary: Option<ReasoningSummaryConfig>,
     pub(crate) service_tier: Option<Option<String>>,
     pub(crate) final_output_json_schema: Option<Option<Value>>,
+    pub(crate) headroom: Option<HeadroomCompressionSettings>,
     pub(crate) personality: Option<Personality>,
     pub(crate) app_server_client_name: Option<String>,
     pub(crate) app_server_client_version: Option<String>,

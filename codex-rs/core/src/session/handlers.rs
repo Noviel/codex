@@ -194,6 +194,7 @@ pub(super) async fn user_input_or_turn_inner(
         final_output_json_schema,
         responsesapi_client_metadata,
         additional_context,
+        headroom,
         thread_settings,
     } = op
     else {
@@ -206,6 +207,7 @@ pub(super) async fn user_input_or_turn_inner(
         SessionSettingsUpdate::default()
     };
     updates.final_output_json_schema = Some(final_output_json_schema);
+    updates.headroom = headroom.filter(|settings| settings.enabled);
 
     let Ok(current_context) = sess.new_turn_with_sub_id(sub_id.clone(), updates).await else {
         // new_turn_with_sub_id already emits the error event.

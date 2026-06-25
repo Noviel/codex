@@ -250,6 +250,7 @@ async fn time_provider_failure_stops_before_inference() -> Result<()> {
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;

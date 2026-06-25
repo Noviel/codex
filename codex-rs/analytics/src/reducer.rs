@@ -396,6 +396,7 @@ impl TurnToolCounts {
             | ThreadItem::Sleep { .. }
             | ThreadItem::EnteredReviewMode { .. }
             | ThreadItem::ExitedReviewMode { .. }
+            | ThreadItem::HeadroomCompressionTrace { .. }
             | ThreadItem::ContextCompaction { .. } => return,
         }
         self.total += 1;
@@ -1699,6 +1700,7 @@ fn tracked_tool_item_id(item: &ThreadItem) -> Option<&str> {
         | ThreadItem::Sleep { .. }
         | ThreadItem::EnteredReviewMode { .. }
         | ThreadItem::ExitedReviewMode { .. }
+        | ThreadItem::HeadroomCompressionTrace { .. }
         | ThreadItem::ContextCompaction { .. } => None,
     }
 }

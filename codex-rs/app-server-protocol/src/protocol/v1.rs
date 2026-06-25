@@ -50,6 +50,9 @@ pub struct InitializeCapabilities {
     /// Opt into `attestation/generate` requests for upstream `x-oai-attestation`.
     #[serde(default)]
     pub request_attestation: bool,
+    /// Client can pass Headroom settings in `turn/start`.
+    #[serde(default)]
+    pub headroom_compression: bool,
     /// Allow downstream MCP servers to request OpenAI extended form elicitations.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub mcp_server_openai_form_elicitation: bool,
@@ -57,6 +60,15 @@ pub struct InitializeCapabilities {
     /// connection (for example `thread/started`).
     #[ts(optional = nullable)]
     pub opt_out_notification_methods: Option<Vec<String>>,
+}
+
+/// Server-declared capabilities negotiated during initialize.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct InitializeResponseCapabilities {
+    /// Server can compress Codex Responses API model requests through Headroom.
+    #[serde(default)]
+    pub headroom_compression: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
@@ -71,6 +83,7 @@ pub struct InitializeResponse {
     /// Operating system for the running app-server target, for example
     /// `"macos"`, `"linux"`, or `"windows"`.
     pub platform_os: String,
+    pub capabilities: InitializeResponseCapabilities,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]

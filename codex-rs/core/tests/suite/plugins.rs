@@ -194,6 +194,7 @@ async fn capability_sections_render_in_developer_message_in_order() -> Result<()
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -270,6 +271,7 @@ async fn explicit_plugin_mentions_use_apps_for_chatgpt_dual_surface_plugins() ->
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -360,6 +362,7 @@ async fn explicit_plugin_mentions_keep_non_conflicting_mcp_for_chatgpt_auth() ->
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -449,6 +452,7 @@ async fn explicit_plugin_mentions_use_mcp_for_api_key_dual_surface_plugins() -> 
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -521,6 +525,7 @@ async fn explicit_plugin_mentions_track_plugin_used_analytics() -> Result<()> {
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;

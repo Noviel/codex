@@ -109,6 +109,7 @@ async fn submit_thread_turn(thread: &Arc<codex_core::CodexThread>, prompt: &str)
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -464,6 +465,7 @@ async fn loads_user_instructions_without_a_primary_environment() -> Result<()> {
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -921,6 +923,7 @@ async fn fork_replays_rendered_instructions_from_shared_history() -> Result<()> 
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;

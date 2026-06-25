@@ -64,6 +64,7 @@ use crate::tools::router::extension_tool_executors;
 use crate::tools::spec_plan::search_tool_enabled;
 use crate::tools::spec_plan::tool_suggest_enabled;
 use crate::turn_diff_tracker::TurnDiffTracker;
+use crate::turn_timing::now_unix_timestamp_ms;
 use crate::turn_timing::record_turn_ttft_metric;
 use crate::util::error_or_panic;
 use codex_analytics::AppInvocation;
@@ -97,6 +98,7 @@ use codex_protocol::protocol::AgentReasoningSectionBreakEvent;
 use codex_protocol::protocol::CodexErrorInfo;
 use codex_protocol::protocol::ErrorEvent;
 use codex_protocol::protocol::EventMsg;
+use codex_protocol::protocol::ItemCompletedEvent;
 use codex_protocol::protocol::PlanDeltaEvent;
 use codex_protocol::protocol::ReasoningContentDeltaEvent;
 use codex_protocol::protocol::ReasoningRawContentDeltaEvent;
@@ -1933,10 +1935,23 @@ async fn try_run_sampling_request(
             turn_context.config.service_tier.clone(),
             responses_metadata,
             &inference_trace,
+            turn_context.headroom.as_ref(),
         )
         .instrument(trace_span!("stream_request"))
         .or_cancel(&cancellation_token)
         .await??;
+    for trace in client_session.take_headroom_compression_traces() {
+        sess.send_event(
+            &turn_context,
+            EventMsg::ItemCompleted(ItemCompletedEvent {
+                thread_id: sess.thread_id(),
+                turn_id: turn_context.sub_id.clone(),
+                item: TurnItem::HeadroomCompressionTrace(trace),
+                completed_at_ms: now_unix_timestamp_ms(),
+            }),
+        )
+        .await;
+    }
     let mut in_flight: FuturesOrdered<BoxFuture<'static, CodexResult<ResponseInputItem>>> =
         FuturesOrdered::new();
     let mut needs_follow_up = false;

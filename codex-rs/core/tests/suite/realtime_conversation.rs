@@ -2678,6 +2678,7 @@ async fn conversation_user_text_turn_is_not_sent_to_realtime() -> Result<()> {
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -3930,6 +3931,7 @@ async fn inbound_handoff_request_steers_active_turn() -> Result<()> {
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;

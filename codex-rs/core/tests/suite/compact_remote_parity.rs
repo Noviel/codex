@@ -609,6 +609,7 @@ async fn submit_user_input(codex: &codex_core::CodexThread, items: Vec<UserInput
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;

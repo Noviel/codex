@@ -188,6 +188,15 @@ fn activity_summary(item: &ThreadItem) -> Option<String> {
         ThreadItem::EnteredReviewMode { .. } => return Some("Entered review mode".to_string()),
         ThreadItem::ExitedReviewMode { .. } => return Some("Exited review mode".to_string()),
         ThreadItem::ContextCompaction { .. } => return Some("Compacted context".to_string()),
+        ThreadItem::HeadroomCompressionTrace {
+            tokens_before,
+            tokens_after,
+            ..
+        } => {
+            return Some(format!(
+                "Headroom compressed {tokens_before} -> {tokens_after} tokens"
+            ));
+        }
         ThreadItem::UserMessage { .. }
         | ThreadItem::HookPrompt { .. }
         | ThreadItem::Sleep { .. } => return None,

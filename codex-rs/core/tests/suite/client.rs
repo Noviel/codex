@@ -217,6 +217,7 @@ async fn non_openai_responses_requests_omit_item_turn_metadata() {
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await
@@ -636,6 +637,7 @@ async fn resume_includes_initial_messages_and_sends_prior_items() {
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await
@@ -1014,6 +1016,7 @@ async fn includes_session_id_thread_id_and_model_headers_in_request() {
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await
@@ -1187,6 +1190,7 @@ async fn send_provider_auth_request(server: &MockServer, auth: ModelProviderAuth
             /*service_tier*/ None,
             &responses_metadata,
             &codex_rollout_trace::InferenceTraceContext::disabled(),
+            /*headroom*/ None,
         )
         .await
         .expect("responses stream to start");
@@ -1229,6 +1233,7 @@ async fn includes_base_instructions_override_in_request() {
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await
@@ -1286,6 +1291,7 @@ async fn chatgpt_auth_sends_correct_request() {
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await
@@ -1415,6 +1421,7 @@ async fn prefers_apikey_when_config_prefers_apikey_even_with_chatgpt_tokens() {
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await
@@ -1454,6 +1461,7 @@ async fn includes_user_instructions_message_in_request() {
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await
@@ -1542,6 +1550,7 @@ async fn includes_apps_guidance_as_developer_message_for_chatgpt_auth() {
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await
@@ -1605,6 +1614,7 @@ async fn omits_apps_guidance_for_api_key_auth_even_when_feature_enabled() {
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await
@@ -1664,6 +1674,7 @@ async fn omits_apps_guidance_when_configured_off() {
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await
@@ -1741,6 +1752,7 @@ async fn omits_apps_guidance_when_orchestrator_mcp_is_disabled() {
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await
@@ -1823,6 +1835,7 @@ async fn omits_environment_context_when_configured_off() {
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await
@@ -1880,6 +1893,7 @@ async fn skills_append_to_developer_message() {
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await
@@ -1963,6 +1977,7 @@ async fn skills_use_aliases_in_developer_message_under_budget_pressure() {
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await
@@ -2024,6 +2039,7 @@ async fn includes_configured_effort_in_request() -> anyhow::Result<()> {
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await
@@ -2066,6 +2082,7 @@ async fn includes_no_effort_in_request() -> anyhow::Result<()> {
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await
@@ -2109,6 +2126,7 @@ async fn includes_default_reasoning_effort_in_request_when_defined_by_model_info
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await
@@ -2160,6 +2178,7 @@ async fn user_turn_collaboration_mode_overrides_model_and_effort() -> anyhow::Re
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: codex_protocol::protocol::ThreadSettingsOverrides {
                 environments: Some(local_selections(config.cwd.clone())),
                 approval_policy: Some(config.permissions.approval_policy.value()),
@@ -2216,6 +2235,7 @@ async fn configured_reasoning_summary_is_sent() -> anyhow::Result<()> {
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await
@@ -2272,6 +2292,7 @@ async fn responses_lite_sets_all_turns_context_and_disables_parallel_tool_calls(
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -2334,6 +2355,7 @@ async fn user_turn_explicit_reasoning_summary_overrides_model_catalog_default() 
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: codex_protocol::protocol::ThreadSettingsOverrides {
                 environments: Some(local_selections(config.cwd.clone())),
                 approval_policy: Some(config.permissions.approval_policy.value()),
@@ -2394,6 +2416,7 @@ async fn reasoning_summary_is_omitted_when_disabled() -> anyhow::Result<()> {
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await
@@ -2452,6 +2475,7 @@ async fn reasoning_summary_none_overrides_model_catalog_default() -> anyhow::Res
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await
@@ -2491,6 +2515,7 @@ async fn includes_default_verbosity_in_request() -> anyhow::Result<()> {
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await
@@ -2539,6 +2564,7 @@ async fn configured_verbosity_not_sent_for_models_without_support() -> anyhow::R
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await
@@ -2586,6 +2612,7 @@ async fn configured_verbosity_is_sent() -> anyhow::Result<()> {
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await
@@ -2640,6 +2667,7 @@ async fn includes_developer_instructions_message_in_request() {
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await
@@ -2861,6 +2889,7 @@ async fn azure_responses_request_includes_store_and_reasoning_ids() {
             /*service_tier*/ None,
             &responses_metadata,
             &codex_rollout_trace::InferenceTraceContext::disabled(),
+            /*headroom*/ None,
         )
         .await
         .expect("responses stream to start");
@@ -2946,6 +2975,7 @@ async fn token_count_includes_rate_limits_snapshot() {
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await
@@ -3087,6 +3117,7 @@ async fn usage_limit_error_emits_rate_limit_event() -> anyhow::Result<()> {
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await
@@ -3164,6 +3195,7 @@ async fn context_window_error_sets_total_tokens_to_model_window() -> anyhow::Res
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -3179,6 +3211,7 @@ async fn context_window_error_sets_total_tokens_to_model_window() -> anyhow::Res
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -3264,6 +3297,7 @@ async fn incomplete_response_emits_content_filter_error_message() -> anyhow::Res
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -3375,6 +3409,7 @@ async fn azure_overrides_assign_properties_used_for_responses_url() {
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await
@@ -3464,6 +3499,7 @@ async fn env_var_overrides_loaded_auth() {
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await
@@ -3521,6 +3557,7 @@ async fn history_dedupes_streamed_and_final_messages_across_turns() {
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await
@@ -3537,6 +3574,7 @@ async fn history_dedupes_streamed_and_final_messages_across_turns() {
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await
@@ -3553,6 +3591,7 @@ async fn history_dedupes_streamed_and_final_messages_across_turns() {
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await

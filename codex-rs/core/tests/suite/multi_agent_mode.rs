@@ -49,6 +49,7 @@ async fn submit_turn(
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: ThreadSettingsOverrides {
                 multi_agent_mode: mode,
                 ..Default::default()

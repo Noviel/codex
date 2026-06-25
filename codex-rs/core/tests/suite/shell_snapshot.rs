@@ -166,6 +166,7 @@ async fn run_snapshot_command_with_options(
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: codex_protocol::protocol::ThreadSettingsOverrides {
                 environments: Some(local_selections(cwd)),
                 approval_policy: Some(AskForApproval::Never),
@@ -264,6 +265,7 @@ async fn run_shell_command_snapshot_with_options(
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: codex_protocol::protocol::ThreadSettingsOverrides {
                 environments: Some(local_selections(cwd)),
                 approval_policy: Some(AskForApproval::Never),
@@ -343,6 +345,7 @@ async fn run_tool_turn_on_harness(
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: codex_protocol::protocol::ThreadSettingsOverrides {
                 environments: Some(local_selections(cwd)),
                 approval_policy: Some(AskForApproval::Never),
@@ -586,6 +589,7 @@ async fn shell_command_snapshot_still_intercepts_apply_patch() -> Result<()> {
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: codex_protocol::protocol::ThreadSettingsOverrides {
                 environments: Some(local_selections(cwd.clone())),
                 approval_policy: Some(AskForApproval::Never),

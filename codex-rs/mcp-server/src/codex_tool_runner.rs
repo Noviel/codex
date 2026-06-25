@@ -111,6 +111,7 @@ pub async fn run_codex_tool_session(
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         },
         client_user_message_id: None,
@@ -162,6 +163,7 @@ pub async fn run_codex_tool_session_reply(
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await

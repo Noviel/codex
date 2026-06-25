@@ -2187,6 +2187,7 @@ mod tests {
                     experimental_api: true,
                     request_attestation: true,
                     mcp_server_openai_form_elicitation: true,
+                    headroom_compression: true,
                     opt_out_notification_methods: Some(vec![
                         "thread/started".to_string(),
                         "item/agentMessage/delta".to_string(),
@@ -2258,6 +2259,7 @@ mod tests {
                         experimental_api: true,
                         request_attestation: true,
                         mcp_server_openai_form_elicitation: true,
+                        headroom_compression: true,
                         opt_out_notification_methods: Some(vec![
                             "thread/started".to_string(),
                             "item/agentMessage/delta".to_string(),

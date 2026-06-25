@@ -73,9 +73,11 @@ use codex_otel::current_span_w3c_trace_context;
 use codex_protocol::ThreadId;
 use codex_protocol::config_types::ReasoningSummary as ReasoningSummaryConfig;
 use codex_protocol::config_types::Verbosity as VerbosityConfig;
+use codex_protocol::items::HeadroomCompressionTraceItem;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::openai_models::ModelInfo;
 use codex_protocol::openai_models::ReasoningEffort as ReasoningEffortConfig;
+use codex_protocol::protocol::HeadroomCompressionSettings;
 use codex_protocol::protocol::InternalSessionSource;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::W3cTraceContext;
@@ -238,6 +240,7 @@ pub struct ModelClient {
 pub struct ModelClientSession {
     client: ModelClient,
     websocket_session: WebsocketSession,
+    headroom_compression_traces: Vec<HeadroomCompressionTraceItem>,
     /// Turn state for sticky routing.
     ///
     /// This is an `OnceLock` that stores the turn state value received from the server
@@ -431,6 +434,7 @@ impl ModelClient {
         ModelClientSession {
             client: self.clone(),
             websocket_session: self.take_cached_websocket_session(),
+            headroom_compression_traces: Vec::new(),
             turn_state: Arc::new(OnceLock::new()),
         }
     }
@@ -999,6 +1003,10 @@ impl ModelClientSession {
         Arc::clone(&self.turn_state)
     }
 
+    pub(crate) fn take_headroom_compression_traces(&mut self) -> Vec<HeadroomCompressionTraceItem> {
+        std::mem::take(&mut self.headroom_compression_traces)
+    }
+
     fn reset_websocket_session(&mut self) {
         self.websocket_session.connection = None;
         self.websocket_session.last_request = None;
@@ -1006,6 +1014,84 @@ impl ModelClientSession {
         self.websocket_session.last_response_from_untraced_warmup = false;
         self.websocket_session
             .set_connection_reused(/*connection_reused*/ false);
+    }
+
+    async fn maybe_compress_with_headroom(
+        &mut self,
+        request: ResponsesApiRequest,
+        headroom: Option<&HeadroomCompressionSettings>,
+    ) -> Result<ResponsesApiRequest> {
+        let Some(headroom) = headroom.filter(|settings| settings.enabled) else {
+            return Ok(request);
+        };
+
+        #[derive(serde::Serialize)]
+        struct HeadroomCompressRequest {
+            request: ResponsesApiRequest,
+            model: String,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            token_budget: Option<u64>,
+        }
+
+        #[derive(serde::Deserialize)]
+        struct HeadroomCompressResponse {
+            request: ResponsesApiRequest,
+            tokens_before: u64,
+            tokens_after: u64,
+            tokens_saved: u64,
+            compression_ratio: f64,
+            transforms_applied: Vec<String>,
+        }
+
+        let started_at = Instant::now();
+        let base_url = headroom.base_url.trim_end_matches('/');
+        let url = format!("{base_url}/v1/responses/compress");
+        let timeout = Duration::from_millis(headroom.timeout_ms);
+        let model = request.model.clone();
+        let body = HeadroomCompressRequest {
+            request,
+            model: model.clone(),
+            token_budget: headroom.token_budget,
+        };
+        let response = build_reqwest_client()
+            .post(&url)
+            .timeout(timeout)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|err| {
+                CodexErr::InvalidRequest(format!("Headroom compression failed: {err}"))
+            })?;
+        let status = response.status();
+        let response_body = response.text().await.map_err(|err| {
+            CodexErr::InvalidRequest(format!("Headroom compression failed: {err}"))
+        })?;
+        if !status.is_success() {
+            return Err(CodexErr::InvalidRequest(format!(
+                "Headroom compression failed: HTTP {status}: {response_body}"
+            )));
+        }
+        let result: HeadroomCompressResponse =
+            serde_json::from_str(&response_body).map_err(|err| {
+                CodexErr::InvalidRequest(format!("Headroom compression failed: {err}"))
+            })?;
+        self.headroom_compression_traces
+            .push(HeadroomCompressionTraceItem {
+                id: uuid::Uuid::new_v4().to_string(),
+                model,
+                base_url: headroom.base_url.clone(),
+                tokens_before: result.tokens_before,
+                tokens_after: result.tokens_after,
+                tokens_saved: result.tokens_saved,
+                compression_ratio: result.compression_ratio,
+                transforms_applied: result.transforms_applied,
+                duration_ms: started_at
+                    .elapsed()
+                    .as_millis()
+                    .try_into()
+                    .unwrap_or(u64::MAX),
+            });
+        Ok(result.request)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1268,7 +1354,7 @@ impl ModelClientSession {
         )
     )]
     async fn stream_responses_api(
-        &self,
+        &mut self,
         prompt: &Prompt,
         model_info: &ModelInfo,
         session_telemetry: &SessionTelemetry,
@@ -1277,6 +1363,7 @@ impl ModelClientSession {
         service_tier: Option<String>,
         responses_metadata: &CodexResponsesMetadata,
         inference_trace: &InferenceTraceContext,
+        headroom: Option<&HeadroomCompressionSettings>,
     ) -> Result<ResponseStream> {
         let auth_manager = self.client.state.provider.auth_manager();
         let mut auth_recovery = auth_manager
@@ -1318,6 +1405,7 @@ impl ModelClientSession {
             let store = request.store;
             self.client
                 .prepare_response_items_for_request(&mut request.input, store);
+            let request = self.maybe_compress_with_headroom(request, headroom).await?;
             let inference_trace_attempt = inference_trace.start_attempt();
             inference_trace_attempt.add_request_headers(&mut options.extra_headers);
             inference_trace_attempt.record_started(&request);
@@ -1400,6 +1488,7 @@ impl ModelClientSession {
         warmup: bool,
         request_trace: Option<W3cTraceContext>,
         inference_trace: &InferenceTraceContext,
+        headroom: Option<&HeadroomCompressionSettings>,
     ) -> Result<WebsocketStreamOutcome> {
         let auth_manager = self.client.state.provider.auth_manager();
 
@@ -1414,7 +1503,7 @@ impl ModelClientSession {
                 client_setup.api_auth.as_ref(),
                 pending_retry,
             );
-            let request = self.client.build_responses_request(
+            let mut request = self.client.build_responses_request(
                 &client_setup.api_provider,
                 prompt,
                 model_info,
@@ -1423,6 +1512,10 @@ impl ModelClientSession {
                 service_tier.clone(),
                 responses_metadata,
             )?;
+            let store = request.store;
+            self.client
+                .prepare_response_items_for_request(&mut request.input, store);
+            let request = self.maybe_compress_with_headroom(request, headroom).await?;
             let mut client_metadata = self
                 .client
                 .build_ws_client_metadata(responses_metadata, model_info.use_responses_lite);
@@ -1485,10 +1578,7 @@ impl ModelClientSession {
                 inference_trace.start_attempt()
             };
             stamp_ws_stream_request_start_ms(&mut ws_request);
-            let ResponsesWsRequest::ResponseCreate(ws_payload) = &mut ws_request;
-            let store = ws_payload.store;
-            self.client
-                .prepare_response_items_for_request(&mut ws_payload.input, store);
+            let ResponsesWsRequest::ResponseCreate(_ws_payload) = &mut ws_request;
             if previous_response_id_from_untraced_warmup {
                 // The transport can reuse an untraced warmup response id and omit the
                 // already-sent input, but rollout replay needs the logical model-visible
@@ -1599,6 +1689,7 @@ impl ModelClientSession {
                 /*warmup*/ true,
                 current_span_w3c_trace_context(),
                 &disabled_trace,
+                None,
             )
             .await
         {
@@ -1640,6 +1731,7 @@ impl ModelClientSession {
         service_tier: Option<String>,
         responses_metadata: &CodexResponsesMetadata,
         inference_trace: &InferenceTraceContext,
+        headroom: Option<&HeadroomCompressionSettings>,
     ) -> Result<ResponseStream> {
         let wire_api = self.client.state.provider.info().wire_api;
         match wire_api {
@@ -1658,6 +1750,7 @@ impl ModelClientSession {
                             /*warmup*/ false,
                             request_trace,
                             inference_trace,
+                            headroom,
                         )
                         .await?
                     {
@@ -1677,6 +1770,7 @@ impl ModelClientSession {
                     service_tier,
                     responses_metadata,
                     inference_trace,
+                    headroom,
                 )
                 .await
             }

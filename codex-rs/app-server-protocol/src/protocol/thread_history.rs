@@ -597,7 +597,8 @@ impl ThreadHistoryBuilder {
             | codex_protocol::items::TurnItem::ImageGeneration(_)
             | codex_protocol::items::TurnItem::FileChange(_)
             | codex_protocol::items::TurnItem::McpToolCall(_)
-            | codex_protocol::items::TurnItem::ContextCompaction(_) => {}
+            | codex_protocol::items::TurnItem::ContextCompaction(_)
+            | codex_protocol::items::TurnItem::HeadroomCompressionTrace(_) => {}
         }
     }
 
@@ -613,6 +614,12 @@ impl ThreadHistoryBuilder {
                 );
             }
             codex_protocol::items::TurnItem::Sleep(_) => {
+                self.upsert_item_in_turn_id(
+                    &payload.turn_id,
+                    ThreadItem::from(payload.item.clone()),
+                );
+            }
+            codex_protocol::items::TurnItem::HeadroomCompressionTrace(_) => {
                 self.upsert_item_in_turn_id(
                     &payload.turn_id,
                     ThreadItem::from(payload.item.clone()),

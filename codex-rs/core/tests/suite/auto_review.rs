@@ -162,6 +162,7 @@ async fn remote_model_override_uses_catalog_model_for_strict_auto_review() -> Re
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: codex_protocol::protocol::ThreadSettingsOverrides {
                 environments: Some(local_selections(cwd_path)),
                 approval_policy: Some(AskForApproval::OnRequest),

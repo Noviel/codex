@@ -52,6 +52,7 @@ pub enum TurnItem {
     FileChange(FileChangeItem),
     McpToolCall(McpToolCallItem),
     ContextCompaction(ContextCompactionItem),
+    HeadroomCompressionTrace(HeadroomCompressionTraceItem),
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, TS, JsonSchema)]
@@ -67,6 +68,21 @@ pub struct UserMessageItem {
 pub struct HookPromptItem {
     pub id: String,
     pub fragments: Vec<HookPromptFragment>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, TS, JsonSchema, PartialEq)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename_all = "camelCase")]
+pub struct HeadroomCompressionTraceItem {
+    pub id: String,
+    pub model: String,
+    pub base_url: String,
+    pub tokens_before: u64,
+    pub tokens_after: u64,
+    pub tokens_saved: u64,
+    pub compression_ratio: f64,
+    pub transforms_applied: Vec<String>,
+    pub duration_ms: u64,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, TS, JsonSchema, PartialEq, Eq)]
@@ -598,6 +614,7 @@ impl TurnItem {
             TurnItem::FileChange(item) => item.id.clone(),
             TurnItem::McpToolCall(item) => item.id.clone(),
             TurnItem::ContextCompaction(item) => item.id.clone(),
+            TurnItem::HeadroomCompressionTrace(item) => item.id.clone(),
         }
     }
 
@@ -623,6 +640,7 @@ impl TurnItem {
             TurnItem::McpToolCall(item) => item.as_legacy_end_event().into_iter().collect(),
             TurnItem::Reasoning(item) => item.as_legacy_events(show_raw_agent_reasoning),
             TurnItem::ContextCompaction(item) => vec![item.as_legacy_event()],
+            TurnItem::HeadroomCompressionTrace(_) => Vec::new(),
         }
     }
 }

@@ -193,6 +193,7 @@ impl ChatWidget {
             }),
             item @ ThreadItem::SubAgentActivity { .. } => self.on_sub_agent_activity(item),
             ThreadItem::DynamicToolCall { .. } => {}
+            ThreadItem::HeadroomCompressionTrace { .. } => {}
             ThreadItem::Sleep { .. } => {}
         }
 

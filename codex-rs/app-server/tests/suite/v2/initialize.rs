@@ -53,6 +53,7 @@ async fn initialize_uses_client_info_name_as_originator() -> Result<()> {
         codex_home: response_codex_home,
         platform_family,
         platform_os,
+        capabilities: _,
     } = to_response::<InitializeResponse>(response)?;
 
     assert!(user_agent.starts_with("codex_vscode/"));
@@ -150,6 +151,7 @@ async fn initialize_respects_originator_override_env_var() -> Result<()> {
         codex_home: response_codex_home,
         platform_family,
         platform_os,
+        capabilities: _,
     } = to_response::<InitializeResponse>(response)?;
 
     assert!(user_agent.starts_with("codex_originator_via_env_var/"));
@@ -213,6 +215,7 @@ async fn initialize_opt_out_notification_methods_filters_notifications() -> Resu
             Some(InitializeCapabilities {
                 experimental_api: true,
                 request_attestation: false,
+                headroom_compression: false,
                 opt_out_notification_methods: Some(vec!["thread/started".to_string()]),
                 mcp_server_openai_form_elicitation: false,
             }),

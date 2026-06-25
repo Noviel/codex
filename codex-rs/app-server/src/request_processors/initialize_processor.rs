@@ -140,6 +140,9 @@ impl InitializeRequestProcessor {
             codex_home,
             platform_family: std::env::consts::FAMILY.to_string(),
             platform_os: std::env::consts::OS.to_string(),
+            capabilities: codex_app_server_protocol::InitializeResponseCapabilities {
+                headroom_compression: true,
+            },
         };
 
         self.outgoing

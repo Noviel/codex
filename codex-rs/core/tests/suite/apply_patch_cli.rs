@@ -104,6 +104,7 @@ async fn submit_without_wait_with_turn_permissions(
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: codex_protocol::protocol::ThreadSettingsOverrides {
                 approval_policy: Some(AskForApproval::Never),
                 sandbox_policy: Some(sandbox_policy),
@@ -1653,6 +1654,7 @@ async fn apply_patch_turn_diff_tracks_local_and_remote_environment_paths() -> Re
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: codex_protocol::protocol::ThreadSettingsOverrides {
                 environments: Some(codex_protocol::protocol::TurnEnvironmentSelections::new(
                     test.config.cwd.clone(),

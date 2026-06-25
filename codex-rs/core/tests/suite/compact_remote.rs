@@ -1,5 +1,7 @@
 use core_test_support::test_codex::local_selections;
 use std::fs;
+use std::sync::Arc;
+use std::sync::Mutex;
 
 use anyhow::Result;
 use codex_core::compact::SUMMARY_PREFIX;
@@ -15,6 +17,7 @@ use codex_protocol::models::ContentItem;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::ConversationStartParams;
 use codex_protocol::protocol::EventMsg;
+use codex_protocol::protocol::HeadroomCompressionSettings;
 use codex_protocol::protocol::ItemCompletedEvent;
 use codex_protocol::protocol::ItemStartedEvent;
 use codex_protocol::protocol::Op;
@@ -45,7 +48,11 @@ use pretty_assertions::assert_eq;
 use serde_json::Value;
 use serde_json::json;
 use tokio::time::Duration;
+use wiremock::Mock;
+use wiremock::Respond;
 use wiremock::ResponseTemplate;
+use wiremock::matchers::method;
+use wiremock::matchers::path;
 
 const CONTEXT_WINDOW_TRUNCATED_OUTPUT_MESSAGE: &str =
     "Output exceeded the available model context and was truncated";
@@ -303,6 +310,105 @@ async fn wait_for_turn_complete(codex: &codex_core::CodexThread) {
     .await;
 }
 
+#[derive(Clone)]
+struct HeadroomResponsesCompressMock {
+    requests: Arc<Mutex<Vec<Value>>>,
+}
+
+impl HeadroomResponsesCompressMock {
+    fn new() -> Self {
+        Self {
+            requests: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+
+    async fn mount(&self, server: &wiremock::MockServer, expected_calls: u64) {
+        Mock::given(method("POST"))
+            .and(path("/v1/responses/compress"))
+            .respond_with(self.clone())
+            .up_to_n_times(expected_calls)
+            .expect(expected_calls)
+            .mount(server)
+            .await;
+    }
+
+    fn requests(&self) -> Vec<Value> {
+        self.requests.lock().expect("headroom requests lock").clone()
+    }
+}
+
+impl Respond for HeadroomResponsesCompressMock {
+    fn respond(&self, request: &wiremock::Request) -> ResponseTemplate {
+        let body: Value = serde_json::from_slice(&request.body)
+            .expect("headroom compress request should be json");
+        self.requests
+            .lock()
+            .expect("headroom requests lock")
+            .push(body.clone());
+
+        let mut compressed_request = body
+            .get("request")
+            .cloned()
+            .expect("headroom request should include model request");
+        let compact = mark_compaction_trigger_as_headroom_compressed(&mut compressed_request);
+        let transforms_applied = if compact {
+            vec!["remote-compact-v2-test"]
+        } else {
+            vec!["sampling-test"]
+        };
+
+        ResponseTemplate::new(200)
+            .insert_header("content-type", "application/json")
+            .set_body_json(json!({
+                "request": compressed_request,
+                "tokens_before": 10_000,
+                "tokens_after": 4_000,
+                "tokens_saved": 6_000,
+                "compression_ratio": 0.4,
+                "transforms_applied": transforms_applied,
+            }))
+    }
+}
+
+fn mark_compaction_trigger_as_headroom_compressed(request: &mut Value) -> bool {
+    let Some(input) = request.get_mut("input").and_then(Value::as_array_mut) else {
+        return false;
+    };
+    let mut marked = false;
+    for item in input {
+        if item.get("type").and_then(Value::as_str) == Some("compaction_trigger") {
+            item["metadata"] = json!({ "headroomCompressed": true });
+            marked = true;
+        }
+    }
+    marked
+}
+
+fn request_contains_headroom_marked_compaction_trigger(
+    request: &responses::ResponsesRequest,
+) -> bool {
+    request.input().iter().any(|item| {
+        item.get("type").and_then(Value::as_str) == Some("compaction_trigger")
+            && item
+                .get("metadata")
+                .and_then(|metadata| metadata.get("headroomCompressed"))
+                .and_then(Value::as_bool)
+                == Some(true)
+    })
+}
+
+fn request_value_contains_compaction_trigger(request: &Value) -> bool {
+    request
+        .get("request")
+        .and_then(|request| request.get("input"))
+        .and_then(Value::as_array)
+        .is_some_and(|input| {
+            input.iter().any(|item| {
+                item.get("type").and_then(Value::as_str) == Some("compaction_trigger")
+            })
+        })
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn remote_compact_replaces_history_for_followups() -> Result<()> {
     skip_if_no_network!(Ok(()));
@@ -350,6 +456,7 @@ async fn remote_compact_replaces_history_for_followups() -> Result<()> {
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -367,6 +474,7 @@ async fn remote_compact_replaces_history_for_followups() -> Result<()> {
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -613,6 +721,7 @@ async fn assert_remote_manual_compact_request_parity(
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -633,6 +742,7 @@ async fn assert_remote_manual_compact_request_parity(
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -647,6 +757,7 @@ async fn assert_remote_manual_compact_request_parity(
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -667,6 +778,7 @@ async fn assert_remote_manual_compact_request_parity(
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -681,6 +793,7 @@ async fn assert_remote_manual_compact_request_parity(
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -849,6 +962,7 @@ async fn remote_compact_v2_reuses_compaction_trigger_for_followups() -> Result<(
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -866,6 +980,7 @@ async fn remote_compact_v2_reuses_compaction_trigger_for_followups() -> Result<(
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -997,6 +1112,7 @@ async fn remote_compact_v2_retries_failures_with_stream_retry_budget() -> Result
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -1014,6 +1130,7 @@ async fn remote_compact_v2_retries_failures_with_stream_retry_budget() -> Result
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -1100,6 +1217,7 @@ async fn remote_compact_v2_accepts_additional_output_items_before_compaction() -
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -1117,6 +1235,7 @@ async fn remote_compact_v2_accepts_additional_output_items_before_compaction() -
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -1136,6 +1255,149 @@ async fn remote_compact_v2_accepts_additional_output_items_before_compaction() -
     assert!(
         !follow_up_body.contains("IGNORED_COMPACT_REPLY"),
         "expected follow-up request to ignore unrelated output items from the compaction stream"
+    );
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn auto_remote_compact_v2_uses_native_headroom() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let harness = TestCodexHarness::with_builder(
+        test_codex()
+            .with_auth(CodexAuth::create_dummy_chatgpt_auth_for_testing())
+            .with_config(|config| {
+                let _ = config.features.enable(Feature::RemoteCompactionV2);
+                config.model_auto_compact_token_limit = Some(120);
+            }),
+    )
+    .await?;
+    let codex = harness.test().codex.clone();
+
+    let headroom_mock = HeadroomResponsesCompressMock::new();
+    headroom_mock.mount(harness.server(), 2).await;
+    let responses_mock = responses::mount_sse_sequence(
+        harness.server(),
+        vec![
+            responses::sse(vec![
+                responses::ev_assistant_message("m1", "FIRST_REPLY_BEFORE_HEADROOM_COMPACT"),
+                responses::ev_completed_with_tokens("resp-1", /*total_tokens*/ 500_000),
+            ]),
+            responses::sse(vec![
+                json!({
+                    "type": "response.output_item.done",
+                    "item": {
+                        "type": "compaction",
+                        "encrypted_content": "HEADROOM_REMOTE_COMPACT_SUMMARY",
+                    }
+                }),
+                responses::ev_completed("resp-compact"),
+            ]),
+            responses::sse(vec![
+                responses::ev_assistant_message("m2", "AFTER_HEADROOM_COMPACT"),
+                responses::ev_completed("resp-2"),
+            ]),
+        ],
+    )
+    .await;
+
+    codex
+        .submit(Op::UserInput {
+            items: vec![UserInput::Text {
+                text: "turn before headroom compact".into(),
+                text_elements: Vec::new(),
+            }],
+            final_output_json_schema: None,
+            responsesapi_client_metadata: None,
+            additional_context: Default::default(),
+            headroom: None,
+            thread_settings: Default::default(),
+        })
+        .await?;
+    wait_for_turn_complete(&codex).await;
+
+    codex
+        .submit(Op::UserInput {
+            items: vec![UserInput::Text {
+                text: "turn that triggers native headroom auto compact".into(),
+                text_elements: Vec::new(),
+            }],
+            final_output_json_schema: None,
+            responsesapi_client_metadata: None,
+            additional_context: Default::default(),
+            headroom: Some(HeadroomCompressionSettings {
+                enabled: true,
+                base_url: harness.server().uri(),
+                timeout_ms: 10_000,
+                token_budget: Some(64_000),
+            }),
+            thread_settings: Default::default(),
+        })
+        .await?;
+
+    let mut saw_remote_compact_headroom_trace = false;
+    loop {
+        let event = codex.next_event().await.expect("expected event");
+        match event.msg {
+            EventMsg::ItemCompleted(ItemCompletedEvent {
+                item: TurnItem::HeadroomCompressionTrace(trace),
+                ..
+            }) => {
+                if trace
+                    .transforms_applied
+                    .iter()
+                    .any(|transform| transform == "remote-compact-v2-test")
+                {
+                    saw_remote_compact_headroom_trace = true;
+                    assert_eq!(trace.tokens_before, 10_000);
+                    assert_eq!(trace.tokens_after, 4_000);
+                    assert_eq!(trace.tokens_saved, 6_000);
+                }
+            }
+            EventMsg::Error(err) => panic!("unexpected turn error: {}", err.message),
+            EventMsg::TurnComplete(_) => break,
+            _ => {}
+        }
+    }
+
+    assert!(
+        saw_remote_compact_headroom_trace,
+        "expected remote compact v2 to emit a Headroom compression trace"
+    );
+
+    let headroom_requests = headroom_mock.requests();
+    assert_eq!(
+        headroom_requests.len(),
+        2,
+        "expected Headroom for remote compact and post-compact sampling"
+    );
+    assert!(
+        headroom_requests
+            .iter()
+            .any(request_value_contains_compaction_trigger),
+        "expected Headroom to receive the remote compact v2 request"
+    );
+
+    let response_requests = responses_mock.requests();
+    assert_eq!(
+        response_requests.len(),
+        3,
+        "expected initial turn, compact request, and post-compact sampling"
+    );
+    let compact_request = &response_requests[1];
+    assert!(
+        request_contains_headroom_marked_compaction_trigger(compact_request),
+        "expected upstream remote compact v2 request to be the Headroom-compressed request"
+    );
+
+    let follow_up_request = &response_requests[2];
+    assert!(
+        follow_up_request
+            .body_json()
+            .to_string()
+            .contains("HEADROOM_REMOTE_COMPACT_SUMMARY"),
+        "expected post-compact sampling to use the installed compacted history"
     );
 
     Ok(())
@@ -1206,6 +1468,7 @@ async fn remote_compact_filters_deferred_dynamic_tools() -> Result<()> {
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -1278,6 +1541,7 @@ async fn remote_compact_runs_automatically() -> Result<()> {
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -1415,6 +1679,7 @@ async fn remote_compact_trims_function_call_history_to_fit_context_window() -> R
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -1429,6 +1694,7 @@ async fn remote_compact_trims_function_call_history_to_fit_context_window() -> R
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -1543,6 +1809,7 @@ async fn remote_compact_rewrites_multiple_trailing_function_call_outputs() -> Re
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -1557,6 +1824,7 @@ async fn remote_compact_rewrites_multiple_trailing_function_call_outputs() -> Re
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -1669,6 +1937,7 @@ async fn auto_remote_compact_trims_function_call_history_to_fit_context_window()
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -1683,6 +1952,7 @@ async fn auto_remote_compact_trims_function_call_history_to_fit_context_window()
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -1703,6 +1973,7 @@ async fn auto_remote_compact_trims_function_call_history_to_fit_context_window()
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -1831,6 +2102,7 @@ async fn remote_compact_trims_tool_search_output_to_empty_tools_array() -> Resul
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -1911,6 +2183,7 @@ async fn auto_remote_compact_failure_stops_agent_loop() -> Result<()> {
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -1925,6 +2198,7 @@ async fn auto_remote_compact_failure_stops_agent_loop() -> Result<()> {
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -2019,6 +2293,7 @@ async fn remote_compact_trim_estimate_uses_session_base_instructions() -> Result
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -2036,6 +2311,7 @@ async fn remote_compact_trim_estimate_uses_session_base_instructions() -> Result
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -2127,6 +2403,7 @@ async fn remote_compact_trim_estimate_uses_session_base_instructions() -> Result
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -2144,6 +2421,7 @@ async fn remote_compact_trim_estimate_uses_session_base_instructions() -> Result
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -2220,6 +2498,7 @@ async fn remote_manual_compact_emits_context_compaction_items() -> Result<()> {
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -2301,6 +2580,7 @@ async fn remote_manual_compact_failure_emits_task_error_event() -> Result<()> {
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -2388,6 +2668,7 @@ async fn remote_compact_persists_replacement_history_in_rollout() -> Result<()> 
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -2536,6 +2817,7 @@ async fn remote_compact_and_resume_refresh_stale_developer_instructions() -> Res
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -2554,6 +2836,7 @@ async fn remote_compact_and_resume_refresh_stale_developer_instructions() -> Res
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -2579,6 +2862,7 @@ async fn remote_compact_and_resume_refresh_stale_developer_instructions() -> Res
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -2678,6 +2962,7 @@ async fn remote_compact_refreshes_stale_developer_instructions_without_resume() 
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -2695,6 +2980,7 @@ async fn remote_compact_refreshes_stale_developer_instructions_without_resume() 
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -2767,6 +3053,7 @@ async fn snapshot_request_shape_remote_pre_turn_compaction_restates_realtime_sta
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -2781,6 +3068,7 @@ async fn snapshot_request_shape_remote_pre_turn_compaction_restates_realtime_sta
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -2848,6 +3136,7 @@ async fn remote_request_uses_custom_experimental_realtime_start_instructions() -
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -2909,6 +3198,7 @@ async fn snapshot_request_shape_remote_pre_turn_compaction_restates_realtime_end
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -2925,6 +3215,7 @@ async fn snapshot_request_shape_remote_pre_turn_compaction_restates_realtime_end
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -3000,6 +3291,7 @@ async fn snapshot_request_shape_remote_manual_compact_restates_realtime_start() 
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -3017,6 +3309,7 @@ async fn snapshot_request_shape_remote_manual_compact_restates_realtime_start() 
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -3100,6 +3393,7 @@ async fn snapshot_request_shape_remote_mid_turn_compaction_does_not_restate_real
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -3116,6 +3410,7 @@ async fn snapshot_request_shape_remote_mid_turn_compaction_does_not_restate_real
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -3207,6 +3502,7 @@ async fn snapshot_request_shape_remote_compact_resume_restates_realtime_end() ->
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -3237,6 +3533,7 @@ async fn snapshot_request_shape_remote_compact_resume_restates_realtime_end() ->
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -3328,6 +3625,7 @@ async fn snapshot_request_shape_remote_pre_turn_compaction_including_incoming_us
                 final_output_json_schema: None,
                 responsesapi_client_metadata: None,
                 additional_context: Default::default(),
+                headroom: None,
                 thread_settings: Default::default(),
             })
             .await?;
@@ -3415,6 +3713,7 @@ async fn snapshot_request_shape_remote_pre_turn_compaction_strips_incoming_model
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -3437,6 +3736,7 @@ async fn snapshot_request_shape_remote_pre_turn_compaction_strips_incoming_model
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -3556,6 +3856,7 @@ async fn snapshot_request_shape_remote_pre_turn_compaction_context_window_exceed
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -3570,6 +3871,7 @@ async fn snapshot_request_shape_remote_pre_turn_compaction_context_window_exceed
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -3662,6 +3964,7 @@ async fn remote_pre_turn_compact_response_seeds_turn_state() -> Result<()> {
                 final_output_json_schema: None,
                 responsesapi_client_metadata: None,
                 additional_context: Default::default(),
+                headroom: None,
                 thread_settings: Default::default(),
             })
             .await?;
@@ -3738,6 +4041,7 @@ async fn remote_mid_turn_compact_v1_sends_turn_state_over_http() -> Result<()> {
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -3823,6 +4127,7 @@ async fn remote_mid_turn_compact_v2_sends_turn_state_over_http() -> Result<()> {
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -3926,6 +4231,7 @@ async fn remote_mid_turn_compact_v2_sends_turn_state_over_websocket() -> Result<
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -4004,6 +4310,7 @@ async fn snapshot_request_shape_remote_mid_turn_continuation_compaction() -> Res
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -4084,6 +4391,7 @@ async fn snapshot_request_shape_remote_mid_turn_compaction_summary_only_reinject
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -4170,6 +4478,7 @@ async fn snapshot_request_shape_remote_mid_turn_compaction_multi_summary_reinjec
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -4187,6 +4496,7 @@ async fn snapshot_request_shape_remote_mid_turn_compaction_multi_summary_reinjec
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;
@@ -4269,6 +4579,7 @@ async fn snapshot_request_shape_remote_manual_compact_without_previous_user_mess
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: Default::default(),
         })
         .await?;

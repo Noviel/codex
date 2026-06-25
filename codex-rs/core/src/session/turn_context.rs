@@ -10,6 +10,7 @@ use codex_protocol::SessionId;
 use codex_protocol::ThreadId;
 use codex_protocol::models::AdditionalPermissionProfile;
 use codex_protocol::openai_models::ModelInfo;
+use codex_protocol::protocol::HeadroomCompressionSettings;
 use codex_protocol::protocol::MultiAgentVersion;
 use codex_protocol::protocol::TurnEnvironmentSelection;
 use codex_sandboxing::compatibility_sandbox_policy_for_permission_profile;
@@ -135,6 +136,7 @@ pub struct TurnContext {
     pub(crate) available_models: Vec<ModelPreset>,
     pub(crate) unified_exec_shell_mode: UnifiedExecShellMode,
     pub(crate) final_output_json_schema: Option<Value>,
+    pub(crate) headroom: Option<HeadroomCompressionSettings>,
     pub(crate) dynamic_tools: Vec<DynamicToolSpec>,
     pub(crate) turn_metadata_state: Arc<TurnMetadataState>,
     pub(crate) extension_data: Arc<codex_extension_api::ExtensionData>,
@@ -288,6 +290,7 @@ impl TurnContext {
             available_models,
             unified_exec_shell_mode: self.unified_exec_shell_mode.clone(),
             final_output_json_schema: self.final_output_json_schema.clone(),
+            headroom: self.headroom.clone(),
             dynamic_tools: self.dynamic_tools.clone(),
             turn_metadata_state: self.turn_metadata_state.clone(),
             extension_data: Arc::clone(&self.extension_data),
@@ -582,6 +585,7 @@ impl Session {
             available_models,
             unified_exec_shell_mode,
             final_output_json_schema: None,
+            headroom: None,
             dynamic_tools: session_configuration.dynamic_tools.clone(),
             turn_metadata_state,
             extension_data,
@@ -658,6 +662,7 @@ impl Session {
                 sub_id,
                 session_configuration,
                 updates.final_output_json_schema,
+                updates.headroom,
             )
             .await)
     }
@@ -667,11 +672,13 @@ impl Session {
         sub_id: String,
         session_configuration: SessionConfiguration,
         final_output_json_schema: Option<Option<Value>>,
+        headroom: Option<HeadroomCompressionSettings>,
     ) -> Arc<TurnContext> {
         self.new_turn_context_from_configuration(
             sub_id,
             session_configuration,
             final_output_json_schema,
+            headroom,
             TurnMultiAgentRuntime::ResolveAndStore,
         )
         .await
@@ -686,6 +693,7 @@ impl Session {
             sub_id,
             session_configuration,
             /*final_output_json_schema*/ None,
+            /*headroom*/ None,
             TurnMultiAgentRuntime::Preview,
         )
         .await
@@ -697,6 +705,7 @@ impl Session {
         sub_id: String,
         session_configuration: SessionConfiguration,
         final_output_json_schema: Option<Option<Value>>,
+        headroom: Option<HeadroomCompressionSettings>,
         multi_agent_runtime: TurnMultiAgentRuntime,
     ) -> Arc<TurnContext> {
         let turn_environments = self.services.turn_environments.snapshot().await;
@@ -787,6 +796,7 @@ impl Session {
         if let Some(final_schema) = final_output_json_schema {
             turn_context.final_output_json_schema = final_schema;
         }
+        turn_context.headroom = headroom;
         let turn_context = Arc::new(turn_context);
         if turn_context
             .environments
@@ -824,6 +834,7 @@ impl Session {
             sub_id,
             session_configuration,
             /*final_output_json_schema*/ None,
+            /*headroom*/ None,
         )
         .await
     }

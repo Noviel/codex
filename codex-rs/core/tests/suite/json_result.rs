@@ -85,6 +85,7 @@ async fn codex_returns_json_result(model: String) -> anyhow::Result<()> {
             final_output_json_schema: Some(serde_json::from_str(SCHEMA)?),
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: codex_protocol::protocol::ThreadSettingsOverrides {
                 environments: Some(local_selections(cwd)),
                 approval_policy: Some(AskForApproval::Never),

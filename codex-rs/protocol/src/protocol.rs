@@ -503,6 +503,16 @@ pub struct AdditionalContextEntry {
     pub kind: AdditionalContextKind,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename_all = "camelCase")]
+pub struct HeadroomCompressionSettings {
+    pub enabled: bool,
+    pub base_url: String,
+    pub timeout_ms: u64,
+    pub token_budget: Option<u64>,
+}
+
 /// Submission operation
 #[derive(Debug, Clone, PartialEq)]
 #[allow(clippy::large_enum_variant)]
@@ -544,6 +554,8 @@ pub enum Op {
         responsesapi_client_metadata: Option<HashMap<String, String>>,
         /// Client-supplied context fragments keyed by an opaque source identifier.
         additional_context: BTreeMap<String, AdditionalContextEntry>,
+        /// Optional Headroom compression settings for model-facing Responses API requests.
+        headroom: Option<HeadroomCompressionSettings>,
 
         /// Persistent thread-settings overrides to apply before the input.
         thread_settings: ThreadSettingsOverrides,
@@ -680,6 +692,7 @@ impl From<Vec<UserInput>> for Op {
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             additional_context: Default::default(),
+            headroom: None,
             thread_settings: ThreadSettingsOverrides::default(),
         }
     }
