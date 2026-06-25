@@ -1,4 +1,5 @@
 use codex_protocol::ThreadId;
+use codex_protocol::items::HeadroomCompressionTraceItem;
 use codex_protocol::items::TurnItem;
 use codex_protocol::items::UserMessageItem;
 use codex_protocol::models::ContentItem;
@@ -252,6 +253,37 @@ fn filtered_item_completion_includes_its_nested_item_type() {
     assert_eq!(
         measurement.items[0].rollout_item_type,
         "event.item_completed.user_message"
+    );
+    assert_eq!(
+        measurement.items[0].decision,
+        super::PersistenceDecision::Dropped
+    );
+}
+
+#[test]
+fn filtered_headroom_compression_trace_completion_includes_its_nested_item_type() {
+    let item = RolloutItem::EventMsg(EventMsg::ItemCompleted(ItemCompletedEvent {
+        thread_id: ThreadId::default(),
+        turn_id: "turn".to_string(),
+        item: TurnItem::HeadroomCompressionTrace(HeadroomCompressionTraceItem {
+            id: "trace".to_string(),
+            model: "model".to_string(),
+            base_url: "http://localhost".to_string(),
+            tokens_before: 100,
+            tokens_after: 60,
+            tokens_saved: 40,
+            compression_ratio: 0.6,
+            transforms_applied: vec!["truncate".to_string()],
+            duration_ms: 25,
+        }),
+        completed_at_ms: 0,
+    }));
+
+    let (_, measurement) = measure_and_filter_rollout_items(&[item]);
+
+    assert_eq!(
+        measurement.items[0].rollout_item_type,
+        "event.item_completed.headroom_compression_trace"
     );
     assert_eq!(
         measurement.items[0].decision,

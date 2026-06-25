@@ -254,6 +254,7 @@ fn turn_item_type(item: &TurnItem) -> &'static str {
         TurnItem::FileChange(_) => "file_change",
         TurnItem::McpToolCall(_) => "mcp_tool_call",
         TurnItem::ContextCompaction(_) => "context_compaction",
+        TurnItem::HeadroomCompressionTrace(_) => "headroom_compression_trace",
     }
 }
 
