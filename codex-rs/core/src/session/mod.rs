@@ -2758,6 +2758,7 @@ impl Session {
         let items = items.as_ref();
         {
             let mut state = self.state.lock().await;
+            state.current_time_reminder.note_recorded_items(items);
             state.record_items(
                 items.iter(),
                 turn_context.model_info.truncation_policy.into(),
@@ -2850,6 +2851,7 @@ impl Session {
         let response_item = items[0].clone();
         {
             let mut state = self.state.lock().await;
+            state.current_time_reminder.note_recorded_items(items);
             state.record_items(
                 items.iter(),
                 turn_context.model_info.truncation_policy.into(),
