@@ -1598,6 +1598,11 @@ impl ThreadManagerState {
         let new_thread = self
             .finalize_thread_spawn(codex, thread_id, tracked_session_source)
             .await?;
+        if let Some(analytics_events_client) = self.analytics_events_client.as_ref() {
+            let thread_config = new_thread.thread.config_snapshot().await;
+            analytics_events_client
+                .set_thread_originator(new_thread.thread_id.to_string(), thread_config.originator);
+        }
         if is_resumed_thread {
             new_thread.thread.emit_thread_resume_lifecycle().await;
         }

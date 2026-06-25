@@ -1738,6 +1738,161 @@ async fn initialize_caches_client_and_thread_lifecycle_publishes_once_initialize
 }
 
 #[tokio::test]
+async fn thread_originator_overrides_shared_connection_across_thread_events() {
+    let mut reducer = AnalyticsReducer::default();
+    let mut events = Vec::new();
+
+    reducer
+        .ingest(sample_initialize_fact(/*connection_id*/ 7), &mut events)
+        .await;
+    reducer
+        .ingest(
+            AnalyticsFact::SetThreadOriginator {
+                thread_id: "thread-work".to_string(),
+                originator: TEST_PRODUCT_CLIENT_ID.to_string(),
+            },
+            &mut events,
+        )
+        .await;
+    for (request_id, thread_id) in [(1, "thread-work"), (2, "thread-default")] {
+        reducer
+            .ingest(
+                AnalyticsFact::ClientResponse {
+                    connection_id: 7,
+                    request_id: RequestId::Integer(request_id),
+                    response: Box::new(sample_thread_start_response(
+                        thread_id, /*ephemeral*/ false, "gpt-5",
+                    )),
+                },
+                &mut events,
+            )
+            .await;
+    }
+
+    let initialized = serde_json::to_value(&events).expect("serialize thread events");
+    assert_eq!(
+        initialized
+            .as_array()
+            .expect("thread events")
+            .iter()
+            .map(|event| {
+                json!({
+                    "thread_id": event["event_params"]["thread_id"],
+                    "app_server_client": event["event_params"]["app_server_client"],
+                })
+            })
+            .collect::<Vec<_>>(),
+        vec![
+            json!({
+                "thread_id": "thread-work",
+                "app_server_client": {
+                    "product_client_id": TEST_PRODUCT_CLIENT_ID,
+                    "client_name": "codex-tui",
+                    "client_version": "1.0.0",
+                    "rpc_transport": "websocket",
+                    "experimental_api_enabled": false,
+                },
+            }),
+            json!({
+                "thread_id": "thread-default",
+                "app_server_client": {
+                    "product_client_id": DEFAULT_ORIGINATOR,
+                    "client_name": "codex-tui",
+                    "client_version": "1.0.0",
+                    "rpc_transport": "websocket",
+                    "experimental_api_enabled": false,
+                },
+            }),
+        ]
+    );
+
+    events.clear();
+    reducer
+        .ingest(
+            AnalyticsFact::ClientRequest {
+                connection_id: 7,
+                request_id: RequestId::Integer(3),
+                request: Box::new(sample_turn_start_request(
+                    "thread-work",
+                    /*request_id*/ 3,
+                )),
+            },
+            &mut events,
+        )
+        .await;
+    reducer
+        .ingest(
+            AnalyticsFact::ClientResponse {
+                connection_id: 7,
+                request_id: RequestId::Integer(3),
+                response: Box::new(sample_turn_start_response("turn-1")),
+            },
+            &mut events,
+        )
+        .await;
+    ingest_completed_command_execution_item(&mut reducer, &mut events, "thread-work", "item-work")
+        .await;
+    ingest_complete_child_turn(&mut reducer, &mut events, "thread-work", "turn-1").await;
+    reducer
+        .ingest(
+            AnalyticsFact::Custom(CustomAnalyticsFact::Compaction(Box::new(
+                CodexCompactionEvent {
+                    thread_id: "thread-work".to_string(),
+                    turn_id: "turn-compact".to_string(),
+                    trigger: CompactionTrigger::Manual,
+                    reason: CompactionReason::UserRequested,
+                    implementation: CompactionImplementation::Responses,
+                    phase: CompactionPhase::StandaloneTurn,
+                    strategy: CompactionStrategy::Memento,
+                    status: CompactionStatus::Completed,
+                    codex_error_kind: None,
+                    codex_error_http_status_code: None,
+                    active_context_tokens_before: 131_000,
+                    active_context_tokens_after: 64_000,
+                    retained_image_count: None,
+                    compaction_summary_tokens: None,
+                    cached_input_tokens: None,
+                    started_at: 100,
+                    completed_at: 101,
+                    duration_ms: Some(1200),
+                },
+            ))),
+            &mut events,
+        )
+        .await;
+
+    let lifecycle = serde_json::to_value(&events).expect("serialize lifecycle events");
+    assert_eq!(
+        lifecycle
+            .as_array()
+            .expect("lifecycle events")
+            .iter()
+            .map(|event| {
+                json!({
+                    "event_type": event["event_type"],
+                    "product_client_id":
+                        event["event_params"]["app_server_client"]["product_client_id"],
+                })
+            })
+            .collect::<Vec<_>>(),
+        vec![
+            json!({
+                "event_type": "codex_command_execution_event",
+                "product_client_id": TEST_PRODUCT_CLIENT_ID,
+            }),
+            json!({
+                "event_type": "codex_turn_event",
+                "product_client_id": TEST_PRODUCT_CLIENT_ID,
+            }),
+            json!({
+                "event_type": "codex_compaction_event",
+                "product_client_id": TEST_PRODUCT_CLIENT_ID,
+            }),
+        ]
+    );
+}
+
+#[tokio::test]
 async fn unrelated_client_requests_are_ignored_by_reducer() {
     let mut reducer = AnalyticsReducer::default();
     let mut events = Vec::new();
@@ -2745,7 +2900,7 @@ async fn subagent_thread_started_publishes_without_initialize() {
 }
 
 #[tokio::test]
-async fn subagent_events_use_inherited_connection_unless_turn_connection_is_explicit() {
+async fn subagent_events_keep_thread_originator_with_explicit_turn_connection() {
     let mut reducer = AnalyticsReducer::default();
     let mut events = Vec::new();
     let parent_thread_id =
@@ -2914,7 +3069,11 @@ async fn subagent_events_use_inherited_connection_unless_turn_connection_is_expl
     };
     assert_eq!(
         event.event_params.app_server_client.product_client_id,
-        DEFAULT_ORIGINATOR
+        "parent-client"
+    );
+    assert_eq!(
+        event.event_params.app_server_client.client_name.as_deref(),
+        Some("codex-tui")
     );
 }
 

@@ -235,6 +235,13 @@ impl AnalyticsEventsClient {
         });
     }
 
+    pub fn set_thread_originator(&self, thread_id: String, originator: String) {
+        self.record_fact(AnalyticsFact::SetThreadOriginator {
+            thread_id,
+            originator,
+        });
+    }
+
     pub fn track_subagent_thread_started(&self, input: SubAgentThreadStartedInput) {
         self.record_fact(AnalyticsFact::Custom(
             CustomAnalyticsFact::SubAgentThreadStarted(input),

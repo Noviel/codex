@@ -455,6 +455,10 @@ pub(crate) enum AnalyticsFact {
         runtime: CodexRuntimeMetadata,
         rpc_transport: AppServerRpcTransport,
     },
+    SetThreadOriginator {
+        thread_id: String,
+        originator: String,
+    },
     ClientRequest {
         connection_id: u64,
         request_id: RequestId,

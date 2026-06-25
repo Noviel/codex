@@ -607,6 +607,7 @@ async fn thread_resume_tracks_thread_initialized_analytics() -> Result<()> {
         event,
         &thread.id,
         &thread.session_id,
+        "codex",
         "gpt-5.3-codex",
         "resumed",
         "user",
