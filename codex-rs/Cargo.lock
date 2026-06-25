@@ -2614,6 +2614,9 @@ version = "0.0.0"
 dependencies = [
  "codex-protocol",
  "codex-utils-string",
+ "serde",
+ "serde_json",
+ "tracing",
 ]
 
 [[package]]
@@ -2670,6 +2673,7 @@ dependencies = [
  "codex-sandboxing",
  "codex-shell-command",
  "codex-shell-escalation",
+ "codex-skills-extension",
  "codex-state",
  "codex-terminal-detection",
  "codex-test-binary-support",
@@ -3925,6 +3929,7 @@ dependencies = [
 name = "codex-skills-extension"
 version = "0.0.0"
 dependencies = [
+ "codex-context-fragments",
  "codex-core-skills",
  "codex-exec-server",
  "codex-extension-api",

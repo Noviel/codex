@@ -1,3 +1,7 @@
+use codex_context_fragments::ContextualUserFragment;
+use codex_context_fragments::PreviousSectionState;
+use codex_context_fragments::WorldStateSection;
+use codex_context_fragments::WorldStateSectionContribution;
 use codex_core_skills::SkillsSnapshot;
 use codex_core_skills::render_available_skills_body;
 use codex_protocol::protocol::SKILLS_INSTRUCTIONS_CLOSE_TAG;
@@ -5,22 +9,26 @@ use codex_protocol::protocol::SKILLS_INSTRUCTIONS_OPEN_TAG;
 use serde::Deserialize;
 use serde::Serialize;
 
-use super::PreviousSectionState;
-use super::WorldStateSection;
-use crate::context::ContextualUserFragment;
-
 const REPLACEMENT_NOTICE: &str = "This skills list replaces the previously provided skills list.";
 const REMOVAL_NOTICE: &str = "The previously provided skills list no longer applies.";
 
+/// Returns the model-visible world-state section for one immutable skill snapshot.
+pub fn skills_world_state_section(
+    skills: &SkillsSnapshot,
+    enabled: bool,
+) -> WorldStateSectionContribution {
+    WorldStateSectionContribution::new(SkillsState::new(skills, enabled))
+}
+
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
-pub(crate) struct SkillsState {
+struct SkillsState {
     skill_root_lines: Vec<String>,
     skill_lines: Vec<String>,
     omitted_count: usize,
 }
 
 impl SkillsState {
-    pub(crate) fn new(skills: &SkillsSnapshot, enabled: bool) -> Self {
+    fn new(skills: &SkillsSnapshot, enabled: bool) -> Self {
         if !enabled {
             return Self::default();
         }

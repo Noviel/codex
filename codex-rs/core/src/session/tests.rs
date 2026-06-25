@@ -192,11 +192,16 @@ impl StepContext {
             turn.turn_skills.snapshot.clone(),
             turn.model_context_window(),
         ));
+        let extension_world_state = vec![codex_skills_extension::skills_world_state_section(
+            skills.as_ref(),
+            turn.config.include_skill_instructions,
+        )];
         Arc::new(Self::new(
             turn,
             environments,
             Vec::new(),
             skills,
+            extension_world_state,
             /*loaded_agents_md*/ None,
         ))
     }
@@ -5404,7 +5409,7 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
         guardian_rejection_circuit_breaker: Mutex::new(Default::default()),
         runtime_handle: tokio::runtime::Handle::current(),
         skills_service,
-        executor_skill_catalog_cache: Default::default(),
+        skills_manager: Default::default(),
         agents_md_manager: Arc::new(AgentsMdManager::new(/*user_instructions*/ None)),
         plugins_manager,
         mcp_manager,
@@ -7482,7 +7487,7 @@ where
         guardian_rejection_circuit_breaker: Mutex::new(Default::default()),
         runtime_handle: tokio::runtime::Handle::current(),
         skills_service,
-        executor_skill_catalog_cache: Default::default(),
+        skills_manager: Default::default(),
         agents_md_manager: Arc::new(AgentsMdManager::new(/*user_instructions*/ None)),
         plugins_manager,
         mcp_manager,

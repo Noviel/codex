@@ -689,12 +689,17 @@ async fn environment_tools_follow_the_step_context() {
         turn.turn_skills.snapshot.clone(),
         turn.model_context_window(),
     ));
+    let extension_world_state = vec![codex_skills_extension::skills_world_state_section(
+        skills.as_ref(),
+        turn.config.include_skill_instructions,
+    )];
     turn.environments.turn_environments.clear();
     let step_context = Arc::new(StepContext::new(
         Arc::new(turn),
         environments,
         Vec::new(),
         skills,
+        extension_world_state,
         /*loaded_agents_md*/ None,
     ));
 

@@ -2837,22 +2837,26 @@ impl Session {
             .services
             .thread_extension_data
             .get::<codex_core_skills::runtime::SkillSources>();
-        let skills = Arc::new(
-            codex_core_skills::SkillsSnapshot::load(
+        let skills_step = self
+            .services
+            .skills_manager
+            .capture_step(
                 turn_context.turn_skills.snapshot.clone(),
-                &self.services.executor_skill_catalog_cache,
                 &selected_capability_roots,
                 extra_skill_sources.as_deref(),
                 turn_context.session_source.restriction_product(),
                 turn_context.model_context_window(),
+                turn_context.config.include_skill_instructions,
             )
-            .await,
-        );
+            .await;
+        let skills = skills_step.skills();
+        let extension_world_state = vec![skills_step.world_state()];
         Arc::new(StepContext::new(
             turn_context,
             environments,
             selected_capability_roots,
             skills,
+            extension_world_state,
             loaded_agents_md,
         ))
     }

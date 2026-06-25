@@ -3,17 +3,13 @@ use std::collections::HashSet;
 use std::fmt;
 use std::sync::Arc;
 
-use codex_exec_server::ResolvedSelectedCapabilityRoot;
-use codex_protocol::protocol::Product;
 use codex_protocol::user_input::UserInput;
 
 use crate::AvailableSkills;
-use crate::ExecutorSkillCatalogCache;
 use crate::HostSkillsSnapshot;
 use crate::SkillMetadata;
 use crate::collect_runtime_skill_mentions;
 use crate::default_skill_metadata_budget;
-use crate::executor_runtime::ExecutorSkillSource;
 use crate::render::SkillRenderSideEffects;
 use crate::render::build_available_skills_from_catalog;
 use crate::runtime::SkillAuthority;
@@ -55,6 +51,19 @@ pub struct RuntimeSkillInjections {
     pub warnings: Vec<String>,
 }
 
+/// One preloaded catalog and the runtime source authorized to read its entries.
+#[derive(Clone)]
+pub struct BoundSkillCatalog {
+    catalog: Arc<SkillCatalog>,
+    source: Arc<dyn SkillSource>,
+}
+
+impl BoundSkillCatalog {
+    pub fn new(catalog: Arc<SkillCatalog>, source: Arc<dyn SkillSource>) -> Self {
+        Self { catalog, source }
+    }
+}
+
 /// One immutable, authority-aware skill view used by a model sampling step.
 #[derive(Clone)]
 pub struct SkillsSnapshot {
@@ -82,12 +91,10 @@ impl SkillsSnapshot {
         Self::new(host, catalog, source_by_entry, context_window)
     }
 
-    pub async fn load(
+    pub async fn from_sources(
         host: HostSkillsSnapshot,
-        executor_catalog_cache: &ExecutorSkillCatalogCache,
-        executor_roots: &[ResolvedSelectedCapabilityRoot],
+        bound_catalogs: &[BoundSkillCatalog],
         extra_sources: Option<&SkillSources>,
-        restriction_product: Option<Product>,
         context_window: Option<i64>,
     ) -> Self {
         let host_source: Arc<dyn SkillSource> = Arc::new(HostSkillSource::new(host.clone()));
@@ -99,21 +106,12 @@ impl SkillsSnapshot {
             &host_catalog(&host),
             &host_source,
         );
-        for root in executor_roots {
-            let cached = executor_catalog_cache
-                .catalog_for_stable_root(root, restriction_product)
-                .await;
-            let executor_source = Arc::new(ExecutorSkillSource::new(
-                root.clone(),
-                restriction_product,
-                cached.identity(),
-            ));
-            let source: Arc<dyn SkillSource> = executor_source;
+        for bound in bound_catalogs {
             merge_bound_catalog(
                 &mut catalog,
                 &mut source_by_entry,
-                cached.catalog(),
-                &source,
+                bound.catalog.as_ref(),
+                &bound.source,
             );
         }
         if let Some(extra_sources) = extra_sources {

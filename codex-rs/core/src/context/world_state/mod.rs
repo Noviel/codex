@@ -1,13 +1,14 @@
 mod agents_md;
 mod environment;
-mod skills;
 
 use crate::context::ContextualUserFragment;
+pub(crate) use codex_context_fragments::PreviousSectionState;
+pub(crate) use codex_context_fragments::WorldStateSection;
+use codex_context_fragments::WorldStateSectionContribution;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::ResponseItem;
 use indexmap::IndexMap;
 use serde::Serialize;
-use serde::de::DeserializeOwned;
 use serde_json::Map;
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -15,115 +16,11 @@ use std::fmt;
 
 pub(crate) use agents_md::AgentsMdState;
 pub(crate) use environment::EnvironmentsState;
-pub(crate) use skills::SkillsState;
-
-trait ErasedWorldStateSection: Send + Sync {
-    fn snapshot(&self) -> Option<Value>;
-
-    fn matches_legacy_fragment(&self, role: &str, text: &str) -> bool;
-
-    fn render_diff(
-        &self,
-        previous: PreviousSectionState<'_, Value>,
-    ) -> Option<Box<dyn ContextualUserFragment>>;
-}
-
-impl<S: WorldStateSection> ErasedWorldStateSection for S {
-    fn snapshot(&self) -> Option<Value> {
-        let mut snapshot = match serde_json::to_value(WorldStateSection::snapshot(self)) {
-            Ok(snapshot) => snapshot,
-            Err(err) => {
-                tracing::error!(
-                    section_id = S::ID,
-                    %err,
-                    "failed to serialize world-state section snapshot"
-                );
-                return None;
-            }
-        };
-        remove_null_object_fields(&mut snapshot);
-        if snapshot.is_null() {
-            tracing::error!(
-                section_id = S::ID,
-                "world-state section snapshot cannot be null"
-            );
-            return None;
-        }
-        Some(snapshot)
-    }
-
-    fn matches_legacy_fragment(&self, role: &str, text: &str) -> bool {
-        S::matches_legacy_fragment(role, text)
-    }
-
-    fn render_diff(
-        &self,
-        previous: PreviousSectionState<'_, Value>,
-    ) -> Option<Box<dyn ContextualUserFragment>> {
-        let typed_snapshot;
-        let previous = match previous {
-            PreviousSectionState::Known(previous) => {
-                match serde_json::from_value::<S::Snapshot>(previous.clone()) {
-                    Ok(previous) => {
-                        typed_snapshot = previous;
-                        PreviousSectionState::Known(&typed_snapshot)
-                    }
-                    Err(err) => {
-                        tracing::warn!(
-                            section_id = S::ID,
-                            %err,
-                            "failed to restore world-state section snapshot"
-                        );
-                        PreviousSectionState::Unknown
-                    }
-                }
-            }
-            PreviousSectionState::Absent => PreviousSectionState::Absent,
-            PreviousSectionState::Unknown => PreviousSectionState::Unknown,
-        };
-        WorldStateSection::render_diff(self, previous)
-    }
-}
-
-/// What is known about a section's previously model-visible state.
-pub(crate) enum PreviousSectionState<'a, T> {
-    /// No persisted snapshot or matching fragment exists in retained history.
-    Absent,
-    /// Retained history contains the section, but its typed snapshot is unavailable.
-    Unknown,
-    /// The exact persisted snapshot is available.
-    Known(&'a T),
-}
-
-/// A typed portion of the state visible to the model.
-///
-/// Implementations own how their current state is rendered relative to an
-/// earlier snapshot of the same section. `ID` is persisted in rollouts and
-/// must remain stable. `Snapshot` should contain only the comparison data
-/// needed to decide what the model must be told next, and must not serialize
-/// to null because merge-patch nulls represent deletion. Sections migrated
-/// from older context can recognize their previous fragments through
-/// `matches_legacy_fragment`.
-pub(crate) trait WorldStateSection: Send + Sync + 'static {
-    const ID: &'static str;
-    type Snapshot: DeserializeOwned + Serialize;
-
-    fn snapshot(&self) -> Self::Snapshot;
-
-    fn matches_legacy_fragment(_role: &str, _text: &str) -> bool {
-        false
-    }
-
-    fn render_diff(
-        &self,
-        previous: PreviousSectionState<'_, Self::Snapshot>,
-    ) -> Option<Box<dyn ContextualUserFragment>>;
-}
 
 /// Live model-visible state, keyed by the same stable section IDs used in rollouts.
 #[derive(Default)]
 pub(crate) struct WorldState {
-    sections: IndexMap<&'static str, Box<dyn ErasedWorldStateSection>>,
+    sections: IndexMap<&'static str, WorldStateSectionContribution>,
 }
 
 /// Compact comparison state for each model-visible world-state section.
@@ -163,12 +60,16 @@ impl fmt::Debug for WorldState {
 
 impl WorldState {
     pub(crate) fn add_section<S: WorldStateSection>(&mut self, section: S) {
-        let id = S::ID;
+        self.add_contribution(WorldStateSectionContribution::new(section));
+    }
+
+    pub(crate) fn add_contribution(&mut self, contribution: WorldStateSectionContribution) {
+        let id = contribution.id();
         assert!(
             !self.sections.contains_key(id),
             "duplicate world-state section ID: {id}"
         );
-        self.sections.insert(id, Box::new(section));
+        self.sections.insert(id, contribution);
     }
 
     pub(crate) fn snapshot(&self) -> WorldStateSnapshot {
@@ -220,16 +121,19 @@ impl WorldState {
 
     fn render_with<'a>(
         &self,
-        mut previous: impl FnMut(&str, &dyn ErasedWorldStateSection) -> PreviousSectionState<'a, Value>,
+        mut previous: impl FnMut(
+            &str,
+            &WorldStateSectionContribution,
+        ) -> PreviousSectionState<'a, Value>,
     ) -> Vec<Box<dyn ContextualUserFragment>> {
         self.sections
             .iter()
-            .filter_map(|(id, section)| section.render_diff(previous(id, section.as_ref())))
+            .filter_map(|(id, section)| section.render_diff(previous(id, section)))
             .collect()
     }
 }
 
-fn has_legacy_fragment(items: &[ResponseItem], section: &dyn ErasedWorldStateSection) -> bool {
+fn has_legacy_fragment(items: &[ResponseItem], section: &WorldStateSectionContribution) -> bool {
     items.iter().any(|item| {
         matches!(
             item,
@@ -243,18 +147,6 @@ fn has_legacy_fragment(items: &[ResponseItem], section: &dyn ErasedWorldStateSec
                 })
         )
     })
-}
-
-fn remove_null_object_fields(value: &mut Value) {
-    // RFC 7386 reserves object-valued nulls for deletion, but arrays are replaced whole.
-    match value {
-        Value::Object(values) => {
-            values.retain(|_, value| !value.is_null());
-            values.values_mut().for_each(remove_null_object_fields);
-        }
-        Value::Array(_) => {}
-        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
-    }
 }
 
 fn create_merge_patch(previous: &Value, current: &Value) -> Option<Value> {

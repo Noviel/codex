@@ -6,20 +6,20 @@ use codex_protocol::capabilities::CapabilityRootLocation;
 use codex_protocol::capabilities::SelectedCapabilityRoot;
 use codex_protocol::protocol::Product;
 
-use crate::loader::EnvironmentSkillMetadata;
-use crate::loader::load_environment_skills_from_root;
-use crate::runtime::SkillAuthority;
-use crate::runtime::SkillCatalog;
-use crate::runtime::SkillCatalogEntry;
-use crate::runtime::SkillPackageId;
-use crate::runtime::SkillReadRequest;
-use crate::runtime::SkillReadResult;
-use crate::runtime::SkillResourceId;
-use crate::runtime::SkillSource;
-use crate::runtime::SkillSourceError;
-use crate::runtime::SkillSourceFuture;
-use crate::runtime::SkillSourceIdentity;
-use crate::runtime::SkillSourceKind;
+use codex_core_skills::loader::EnvironmentSkillMetadata;
+use codex_core_skills::loader::load_environment_skills_from_root;
+use codex_core_skills::runtime::SkillAuthority;
+use codex_core_skills::runtime::SkillCatalog;
+use codex_core_skills::runtime::SkillCatalogEntry;
+use codex_core_skills::runtime::SkillPackageId;
+use codex_core_skills::runtime::SkillReadRequest;
+use codex_core_skills::runtime::SkillReadResult;
+use codex_core_skills::runtime::SkillResourceId;
+use codex_core_skills::runtime::SkillSource;
+use codex_core_skills::runtime::SkillSourceError;
+use codex_core_skills::runtime::SkillSourceFuture;
+use codex_core_skills::runtime::SkillSourceIdentity;
+use codex_core_skills::runtime::SkillSourceKind;
 
 /// Session-lifetime cache for catalogs discovered from stable executor capability roots.
 ///
@@ -102,8 +102,8 @@ impl ExecutorSkillCatalogCache {
 }
 
 impl CachedExecutorSkillCatalog {
-    pub(crate) fn catalog(&self) -> &SkillCatalog {
-        self.catalog.as_ref()
+    pub(crate) fn catalog(&self) -> Arc<SkillCatalog> {
+        Arc::clone(&self.catalog)
     }
 
     pub(crate) fn identity(&self) -> SkillSourceIdentity {
