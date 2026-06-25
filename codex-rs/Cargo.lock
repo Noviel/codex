@@ -2634,6 +2634,7 @@ dependencies = [
  "codex-core-skills",
  "codex-exec-server",
  "codex-execpolicy",
+ "codex-executor-plugin-extension",
  "codex-extension-api",
  "codex-features",
  "codex-feedback",
@@ -2978,6 +2979,22 @@ dependencies = [
  "serde_with",
  "starlark",
  "tempfile",
+]
+
+[[package]]
+name = "codex-executor-plugin-extension"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "codex-config",
+ "codex-connectors",
+ "codex-core-plugins",
+ "codex-exec-server",
+ "codex-mcp",
+ "codex-plugin",
+ "codex-protocol",
+ "codex-utils-path-uri",
+ "tracing",
 ]
 
 [[package]]

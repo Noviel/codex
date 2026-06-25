@@ -39,16 +39,23 @@ impl Session {
         selected_roots: &[SelectedCapabilityRoot],
         resolved_roots: &[ResolvedSelectedCapabilityRoot],
     ) -> Arc<McpRuntimeSnapshot> {
-        let mut cache = self.services.selected_mcp_runtime.lock().await;
         if selected_roots.is_empty() {
+            let cache = self.services.selected_mcp_runtime.lock().await;
             let base = cache.base_runtime();
             self.services
                 .publish_existing_mcp_runtime(Arc::clone(&base));
             return base;
         }
         let bindings = selected_bindings(selected_roots, resolved_roots);
+        // Serialize extension projection with live-runtime publication. Otherwise a concurrent
+        // transient projection failure could publish the base runtime after a successful capture.
+        let mut cache = self.services.selected_mcp_runtime.lock().await;
+        let plugins = self
+            .services
+            .executor_plugin_manager
+            .capture_step(&bindings)
+            .await;
         let cached_runtime = cache.runtime_for_bindings(&bindings);
-        let plugins = cache.project_plugins(&bindings).await;
 
         let base = cache.base_runtime();
         let mcp_config = Arc::new(
@@ -98,16 +105,12 @@ impl Session {
         &self,
         config: &Config,
     ) -> (McpConfig, McpRuntimeContext) {
-        let mut cache = self.services.selected_mcp_runtime.lock().await;
-        let projection = self.project_mcp_config_inner(config, &mut cache).await;
+        let _cache = self.services.selected_mcp_runtime.lock().await;
+        let projection = self.project_mcp_config_inner(config).await;
         (projection.config, projection.runtime_context)
     }
 
-    async fn project_mcp_config_inner(
-        &self,
-        config: &Config,
-        cache: &mut super::SelectedMcpRuntimeCache,
-    ) -> ProjectedMcpConfig {
+    async fn project_mcp_config_inner(&self, config: &Config) -> ProjectedMcpConfig {
         let environments = self.services.turn_environments.snapshot().await;
         let selected_roots = &self.services.selected_capability_roots;
         let resolved_roots = self
@@ -116,11 +119,15 @@ impl Session {
             .environment_manager()
             .resolve_selected_capability_roots(
                 selected_roots,
-                &environments.captured_environment_availability(),
+                &environments.captured_environments(),
             )
             .await;
         let bindings = selected_bindings(selected_roots, &resolved_roots);
-        let plugins = cache.project_plugins(&bindings).await;
+        let plugins = self
+            .services
+            .executor_plugin_manager
+            .capture_step(&bindings)
+            .await;
         let base_config = self.services.mcp_manager.runtime_config(config).await;
         let mcp_config = self
             .services
@@ -139,7 +146,7 @@ impl Session {
         config: &Config,
     ) -> Arc<McpRuntimeSnapshot> {
         let mut cache = self.services.selected_mcp_runtime.lock().await;
-        let projection = self.project_mcp_config_inner(config, &mut cache).await;
+        let projection = self.project_mcp_config_inner(config).await;
         let current = cache
             .runtime_for_bindings(&projection.bindings)
             .unwrap_or_else(|| self.services.latest_mcp_runtime());

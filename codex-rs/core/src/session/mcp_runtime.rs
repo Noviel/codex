@@ -1,21 +1,13 @@
 use std::sync::Arc;
 
-use codex_core_plugins::ExecutorPluginRuntime;
 use codex_exec_server::ResolvedSelectedCapabilityRoot;
 use codex_mcp::McpRuntimeSnapshot;
-use codex_protocol::capabilities::SelectedCapabilityRoot;
 
-/// One live selected-plugin MCP runtime retained between model steps.
+/// Live base and selected-plugin MCP runtimes retained between model steps.
 ///
-/// Selected environment identity and contents are stable. Plugin manifests, MCP declarations, and
-/// app declarations are therefore cached by the complete selected root for the session lifetime.
-/// Successful projections and stable non-plugin roots are cached. Failed reads are not cached, so
-/// a transient executor error can recover later.
-///
-/// A live runtime is a separate cache: it is reusable only for the same ordered selected roots and
-/// the same process-local environment handles. The caller additionally compares the effective MCP
-/// config and runtime context. Replacing a connection handle may rebuild live processes, but it
-/// reuses the stable plugin projection and does not reread capability files.
+/// A selected runtime is reusable only for the same ordered selected roots and the same
+/// process-local environment handles. The executor-plugin extension separately retains stable
+/// plugin metadata across connection-handle replacement.
 ///
 /// Within a live session, the selected runtime is invalidated in exactly two ways:
 ///
@@ -27,18 +19,12 @@ use codex_protocol::capabilities::SelectedCapabilityRoot;
 #[derive(Default)]
 pub(crate) struct SelectedMcpRuntimeCache {
     base_runtime: Option<Arc<McpRuntimeSnapshot>>,
-    plugin_projections: Vec<CachedExecutorPluginProjection>,
     runtime: Option<CachedSelectedRuntime>,
 }
 
 struct CachedSelectedRuntime {
     bindings: Vec<(usize, ResolvedSelectedCapabilityRoot)>,
     runtime: Arc<McpRuntimeSnapshot>,
-}
-
-struct CachedExecutorPluginProjection {
-    selected_root: SelectedCapabilityRoot,
-    plugin: Option<ExecutorPluginRuntime>,
 }
 
 impl SelectedMcpRuntimeCache {
@@ -65,47 +51,6 @@ impl SelectedMcpRuntimeCache {
             .as_ref()
             .filter(|cached| same_bindings(&cached.bindings, bindings))
             .map(|cached| Arc::clone(&cached.runtime))
-    }
-
-    pub(crate) async fn project_plugins(
-        &mut self,
-        bindings: &[(usize, ResolvedSelectedCapabilityRoot)],
-    ) -> Vec<(usize, ExecutorPluginRuntime)> {
-        let mut plugins = Vec::new();
-        for (selection_order, root) in bindings {
-            let selected_root = root.selected_root();
-            if let Some(cached) = self
-                .plugin_projections
-                .iter()
-                .find(|cached| &cached.selected_root == selected_root)
-            {
-                if let Some(plugin) = &cached.plugin {
-                    plugins.push((*selection_order, plugin.clone()));
-                }
-                continue;
-            }
-
-            match ExecutorPluginRuntime::project(root).await {
-                Ok(plugin) => {
-                    self.plugin_projections
-                        .push(CachedExecutorPluginProjection {
-                            selected_root: selected_root.clone(),
-                            plugin: plugin.clone(),
-                        });
-                    if let Some(plugin) = plugin {
-                        plugins.push((*selection_order, plugin));
-                    }
-                }
-                Err(err) => {
-                    tracing::warn!(
-                        selected_root = selected_root.id,
-                        error = %err,
-                        "failed to project selected executor plugin runtime"
-                    );
-                }
-            }
-        }
-        plugins
     }
 
     pub(crate) fn replace_selected_runtime(

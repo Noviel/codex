@@ -1,6 +1,10 @@
+use std::io;
+
 use anyhow::Context;
 use codex_config::McpServerConfig;
 use codex_connectors::parse_plugin_app_config;
+use codex_core_plugins::ExecutorPluginProvider;
+use codex_core_plugins::ResolvedExecutorPlugin;
 use codex_exec_server::ExecutorFileSystem;
 use codex_exec_server::ResolvedSelectedCapabilityRoot;
 use codex_mcp::parse_executor_plugin_mcp_config;
@@ -10,14 +14,10 @@ use codex_plugin::ResolvedPlugin;
 use codex_plugin::ResolvedPluginLocation;
 use codex_plugin::manifest::PluginManifestMcpServers;
 use codex_utils_path_uri::PathUri;
-use std::io;
-
-use crate::ExecutorPluginProvider;
-use crate::ResolvedExecutorPlugin;
 
 const DEFAULT_MCP_CONFIG_FILE: &str = ".mcp.json";
 
-/// MCP and connector declarations read from one stable executor capability root.
+/// Stable MCP and connector metadata projected from one executor capability root.
 #[derive(Clone, Debug)]
 pub struct ExecutorPluginRuntime {
     plugin: ResolvedPlugin,
@@ -26,8 +26,9 @@ pub struct ExecutorPluginRuntime {
 }
 
 impl ExecutorPluginRuntime {
-    /// Reads both runtime declaration files through the root's current ready filesystem.
-    /// `Ok(None)` means the stable root is not a plugin and may be cached by the caller.
+    /// Reads plugin declarations through the root's current ready filesystem.
+    ///
+    /// `Ok(None)` means the stable root is not a plugin and may be cached by the manager.
     pub async fn project(root: &ResolvedSelectedCapabilityRoot) -> anyhow::Result<Option<Self>> {
         let Some(plugin) = ExecutorPluginProvider::resolve_pinned(root).await? else {
             return Ok(None);
@@ -68,31 +69,27 @@ async fn load_from_file_system(
     let (contents, config_path) = match plugin.manifest().paths.mcp_servers.as_ref() {
         Some(PluginManifestMcpServers::Path(PluginResourceLocator::Environment {
             path, ..
-        })) => {
-            (
-                file_system
-                    .read_file_text(path, /*sandbox*/ None)
-                    .await
-                    .with_context(|| {
-                        format!(
-                            "failed to read MCP config for selected plugin `{plugin_id}` at `{path}`"
-                        )
-                    })?,
-                path.clone(),
-            )
-        }
+        })) => (
+            file_system
+                .read_file_text(path, /*sandbox*/ None)
+                .await
+                .with_context(|| {
+                    format!(
+                        "failed to read MCP config for selected plugin `{plugin_id}` at `{path}`"
+                    )
+                })?,
+            path.clone(),
+        ),
         Some(PluginManifestMcpServers::Object(object_config)) => {
             let PluginResourceLocator::Environment { path, .. } = plugin.manifest_path();
             (object_config.clone(), path.clone())
         }
         None => {
-            let config_path = plugin_root
-                .join(DEFAULT_MCP_CONFIG_FILE)
-                .with_context(|| {
-                    format!(
-                        "failed to resolve `{DEFAULT_MCP_CONFIG_FILE}` below selected plugin `{plugin_id}` at `{plugin_root}`"
-                    )
-                })?;
+            let config_path = plugin_root.join(DEFAULT_MCP_CONFIG_FILE).with_context(|| {
+                format!(
+                    "failed to resolve `{DEFAULT_MCP_CONFIG_FILE}` below selected plugin `{plugin_id}` at `{plugin_root}`"
+                )
+            })?;
             let contents = match file_system
                 .read_file_text(&config_path, /*sandbox*/ None)
                 .await

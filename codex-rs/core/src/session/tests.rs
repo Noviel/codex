@@ -5422,6 +5422,7 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
         mcp_runtime: Arc::new(arc_swap::ArcSwapOption::from(Some(mcp_runtime))),
         mcp_elicitation_managers: std::sync::Mutex::new(Vec::new()),
         selected_mcp_runtime: Mutex::new(selected_mcp_runtime),
+        executor_plugin_manager: Default::default(),
         mcp_startup_cancellation_token: Mutex::new(CancellationToken::new()),
         unified_exec_manager: UnifiedExecProcessManager::new(
             config.background_terminal_max_timeout,
@@ -7500,6 +7501,7 @@ where
         mcp_runtime: Arc::new(arc_swap::ArcSwapOption::from(Some(mcp_runtime))),
         mcp_elicitation_managers: std::sync::Mutex::new(Vec::new()),
         selected_mcp_runtime: Mutex::new(selected_mcp_runtime),
+        executor_plugin_manager: Default::default(),
         mcp_startup_cancellation_token: Mutex::new(CancellationToken::new()),
         unified_exec_manager: UnifiedExecProcessManager::new(
             config.background_terminal_max_timeout,

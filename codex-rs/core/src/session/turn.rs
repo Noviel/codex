@@ -301,6 +301,7 @@ pub(crate) async fn run_turn(
                     step_context.environments.clone(),
                     step_context.selected_capability_roots.clone(),
                     Arc::clone(&step_context.skills),
+                    step_context.extension_world_state.clone(),
                     mcp,
                     step_context.loaded_agents_md.clone(),
                 ));

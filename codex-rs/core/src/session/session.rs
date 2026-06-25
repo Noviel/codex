@@ -1014,6 +1014,7 @@ impl Session {
                 mcp_runtime,
                 mcp_elicitation_managers: std::sync::Mutex::new(Vec::new()),
                 selected_mcp_runtime: Mutex::new(Default::default()),
+                executor_plugin_manager: Default::default(),
                 mcp_startup_cancellation_token: Mutex::new(CancellationToken::new()),
                 unified_exec_manager: UnifiedExecProcessManager::new(
                     config.background_terminal_max_timeout,

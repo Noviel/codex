@@ -53,8 +53,10 @@ pub(crate) struct SessionServices {
     pub(crate) mcp_runtime: Arc<ArcSwapOption<McpRuntimeSnapshot>>,
     /// Managers that may still own an outstanding elicitation request.
     pub(crate) mcp_elicitation_managers: StdMutex<Vec<Weak<McpConnectionManager>>>,
-    /// Successful executor projections and the augmented runtime built from them.
+    /// Live MCP runtimes built from selected executor projections.
     pub(crate) selected_mcp_runtime: Mutex<SelectedMcpRuntimeCache>,
+    /// Extension-owned stable metadata for selected executor plugin roots.
+    pub(crate) executor_plugin_manager: codex_executor_plugin_extension::ExecutorPluginManager,
     pub(crate) mcp_startup_cancellation_token: Mutex<CancellationToken>,
     pub(crate) unified_exec_manager: UnifiedExecProcessManager,
     #[cfg_attr(not(unix), allow(dead_code))]
