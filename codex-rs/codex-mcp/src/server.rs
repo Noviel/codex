@@ -1,8 +1,10 @@
 use std::collections::HashMap;
+use std::fmt;
 
 use codex_config::AppToolApproval;
 use codex_config::McpServerConfig;
 use codex_config::McpServerTransportConfig;
+use thiserror::Error;
 
 /// The runtime launch strategy for an effective MCP server.
 #[derive(Debug, Clone)]
@@ -14,17 +16,81 @@ pub(crate) enum McpServerLaunch {
 #[derive(Debug, Clone)]
 pub struct EffectiveMcpServer {
     launch: McpServerLaunch,
+    runtime_bearer_token: Option<RuntimeBearerToken>,
+}
+
+#[derive(Clone)]
+struct RuntimeBearerToken(String);
+
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum RuntimeBearerTokenError {
+    #[error("runtime bearer tokens require a streamable HTTP MCP server")]
+    UnsupportedTransport,
+    #[error("runtime bearer token must not be empty")]
+    EmptyToken,
+    #[error("runtime bearer token conflicts with configured HTTP authorization")]
+    ConflictingAuthorization,
+}
+
+impl fmt::Debug for RuntimeBearerToken {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("[REDACTED]")
+    }
 }
 
 impl EffectiveMcpServer {
     pub fn configured(config: McpServerConfig) -> Self {
         Self {
             launch: McpServerLaunch::Configured(Box::new(config)),
+            runtime_bearer_token: None,
         }
+    }
+
+    /// Creates an HTTP MCP server with a process-owned bearer token that is
+    /// intentionally absent from the serializable server configuration.
+    pub fn configured_with_runtime_bearer_token(
+        config: McpServerConfig,
+        bearer_token: String,
+    ) -> Result<Self, RuntimeBearerTokenError> {
+        let McpServerTransportConfig::StreamableHttp {
+            bearer_token_env_var,
+            http_headers,
+            env_http_headers,
+            ..
+        } = &config.transport
+        else {
+            return Err(RuntimeBearerTokenError::UnsupportedTransport);
+        };
+        if bearer_token.trim().is_empty() {
+            return Err(RuntimeBearerTokenError::EmptyToken);
+        }
+        let has_authorization_header = |headers: &Option<HashMap<String, String>>| {
+            headers.as_ref().is_some_and(|headers| {
+                headers
+                    .keys()
+                    .any(|name| name.eq_ignore_ascii_case("authorization"))
+            })
+        };
+        if bearer_token_env_var.is_some()
+            || has_authorization_header(http_headers)
+            || has_authorization_header(env_http_headers)
+        {
+            return Err(RuntimeBearerTokenError::ConflictingAuthorization);
+        }
+        Ok(Self {
+            launch: McpServerLaunch::Configured(Box::new(config)),
+            runtime_bearer_token: Some(RuntimeBearerToken(bearer_token)),
+        })
     }
 
     pub(crate) fn launch(&self) -> &McpServerLaunch {
         &self.launch
+    }
+
+    pub(crate) fn runtime_bearer_token(&self) -> Option<&str> {
+        self.runtime_bearer_token
+            .as_ref()
+            .map(|token| token.0.as_str())
     }
 
     pub fn configured_config(&self) -> Option<&McpServerConfig> {
@@ -115,3 +181,7 @@ impl From<&EffectiveMcpServer> for McpServerMetadata {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "server_tests.rs"]
+mod tests;

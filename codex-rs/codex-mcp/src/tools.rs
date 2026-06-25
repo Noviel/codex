@@ -11,13 +11,12 @@ use std::sync::Arc;
 
 use codex_config::McpServerConfig;
 use codex_protocol::ToolName;
+use codex_utils_string::sha1_12_hex_suffix;
 use rmcp::model::Tool;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Map;
 use serde_json::Value as JsonValue;
-use sha1::Digest;
-use sha1::Sha1;
 use tracing::warn;
 
 use crate::mcp::sanitize_responses_api_tool_name;
@@ -225,7 +224,7 @@ where
             candidate.callable_name.clone(),
         )) {
             candidate.callable_name =
-                append_hash_suffix(&candidate.callable_name, &candidate.raw_tool_identity);
+                append_mcp_name_hash_suffix(&candidate.callable_name, &candidate.raw_tool_identity);
         }
     }
 
@@ -259,7 +258,6 @@ struct CallableToolCandidate {
 
 const MCP_TOOL_NAME_DELIMITER: &str = "__";
 const MAX_TOOL_NAME_LENGTH: usize = 64;
-const CALLABLE_NAME_HASH_LEN: usize = 12;
 const META_OPENAI_FILE_PARAMS: &str = "openai/fileParams";
 
 fn rewrite_input_schema_for_local_file_paths(input_schema: &mut JsonValue, file_params: &[String]) {
@@ -316,19 +314,11 @@ fn callable_namespace_with_prefix(namespace: &str, prefix_mcp_tool_names: bool) 
     }
 }
 
-fn sha1_hex(s: &str) -> String {
-    let mut hasher = Sha1::new();
-    hasher.update(s.as_bytes());
-    let sha1 = hasher.finalize();
-    format!("{sha1:x}")
-}
-
 fn callable_name_hash_suffix(raw_identity: &str) -> String {
-    let hash = sha1_hex(raw_identity);
-    format!("_{}", &hash[..CALLABLE_NAME_HASH_LEN])
+    sha1_12_hex_suffix(raw_identity)
 }
 
-fn append_hash_suffix(value: &str, raw_identity: &str) -> String {
+fn append_mcp_name_hash_suffix(value: &str, raw_identity: &str) -> String {
     format!("{value}{}", callable_name_hash_suffix(raw_identity))
 }
 
@@ -341,7 +331,7 @@ fn append_namespace_hash_suffix(namespace: &str, raw_identity: &str) -> String {
             MCP_TOOL_NAME_DELIMITER
         )
     } else {
-        append_hash_suffix(namespace, raw_identity)
+        append_mcp_name_hash_suffix(namespace, raw_identity)
     }
 }
 

@@ -22,9 +22,7 @@ use crate::codex_apps::CodexAppsToolsCacheContext;
 use crate::codex_apps::load_cached_codex_apps_tools;
 use crate::codex_apps::load_startup_cached_codex_apps_server_info;
 use crate::codex_apps::load_startup_cached_codex_apps_tools_snapshot;
-use crate::codex_apps::normalize_codex_apps_callable_name;
 use crate::codex_apps::normalize_codex_apps_callable_namespace;
-use crate::codex_apps::normalize_codex_apps_tool_title;
 use crate::codex_apps::write_codex_apps_tools_cache;
 use crate::elicitation::ElicitationRequestManager;
 use crate::mcp::CODEX_APPS_MCP_SERVER_NAME;
@@ -47,6 +45,8 @@ use codex_config::McpServerConfig;
 use codex_config::McpServerTransportConfig;
 use codex_config::types::AuthKeyringBackendKind;
 use codex_config::types::OAuthCredentialsStoreMode;
+use codex_connectors::metadata::connector_tool_name;
+use codex_connectors::metadata::connector_tool_title;
 use codex_exec_server::HttpClient;
 use codex_exec_server::ReqwestHttpClient;
 use codex_protocol::mcp::McpServerInfo;
@@ -428,7 +428,7 @@ fn codex_apps_tool_info_from_listed_tool(
     let connector_id = tool.connector_id;
     let connector_name = tool.connector_name;
     let connector_description = tool.connector_description;
-    let callable_name = normalize_codex_apps_callable_name(
+    let callable_name = connector_tool_name(
         &tool_def.name,
         connector_id.as_deref(),
         connector_name.as_deref(),
@@ -436,7 +436,7 @@ fn codex_apps_tool_info_from_listed_tool(
     let callable_namespace =
         normalize_codex_apps_callable_namespace(server_name, connector_name.as_deref());
     if let Some(title) = tool_def.title.as_deref() {
-        let normalized_title = normalize_codex_apps_tool_title(connector_name.as_deref(), title);
+        let normalized_title = connector_tool_title(connector_name.as_deref(), title);
         if tool_def.title.as_deref() != Some(normalized_title.as_str()) {
             tool_def.title = Some(normalized_title);
         }
@@ -672,6 +672,7 @@ async fn make_rmcp_client(
     runtime_context: McpRuntimeContext,
     runtime_auth_provider: Option<SharedAuthProvider>,
 ) -> Result<RmcpClient, StartupOutcomeError> {
+    let runtime_bearer_token = server.runtime_bearer_token().map(str::to_string);
     let config = match server.launch() {
         McpServerLaunch::Configured(config) => config.as_ref().clone(),
     };
@@ -729,11 +730,13 @@ async fn make_rmcp_client(
                 || Arc::new(ReqwestHttpClient) as Arc<dyn HttpClient>,
                 |environment| environment.get_http_client(),
             );
-            let resolved_bearer_token =
-                match resolve_bearer_token(server_name, bearer_token_env_var.as_deref()) {
+            let resolved_bearer_token = match runtime_bearer_token {
+                Some(token) => Some(token),
+                None => match resolve_bearer_token(server_name, bearer_token_env_var.as_deref()) {
                     Ok(token) => token,
                     Err(error) => return Err(error.into()),
-                };
+                },
+            };
             RmcpClient::new_streamable_http_client(
                 server_name,
                 &url,

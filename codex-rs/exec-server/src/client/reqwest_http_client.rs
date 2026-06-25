@@ -6,6 +6,7 @@
 //!   orchestrator has forwarded `http/request` over JSON-RPC
 
 use std::error::Error as StdError;
+use std::net::IpAddr;
 use std::time::Duration;
 
 use codex_client::build_reqwest_client_with_custom_ca;
@@ -45,18 +46,32 @@ pub(crate) struct PendingReqwestHttpBodyStream {
 
 /// Validates `http/request` parameters and runs the actual `reqwest` call used
 /// by the exec-server route and the local [`HttpClient`] backend.
-pub(crate) struct ReqwestHttpRequestRunner {
-    client: reqwest::Client,
-}
+pub(crate) struct ReqwestHttpRequestRunner;
 
 impl ReqwestHttpClient {
-    fn build_client(timeout_ms: Option<u64>) -> Result<reqwest::Client, ExecServerError> {
-        let builder = match timeout_ms {
+    fn build_client(
+        timeout_ms: Option<u64>,
+        request_url: &Url,
+    ) -> Result<reqwest::Client, ExecServerError> {
+        let mut builder = match timeout_ms {
             None => reqwest::Client::builder(),
             Some(timeout_ms) => {
                 reqwest::Client::builder().timeout(Duration::from_millis(timeout_ms))
             }
         };
+        if is_literal_loopback_url(request_url) {
+            builder = builder
+                .no_proxy()
+                .redirect(reqwest::redirect::Policy::custom(|attempt| {
+                    if attempt.previous().len() >= 10 {
+                        attempt.error("too many loopback HTTP redirects")
+                    } else if is_literal_loopback_url(attempt.url()) {
+                        attempt.follow()
+                    } else {
+                        attempt.error("loopback HTTP redirects must remain on loopback")
+                    }
+                }));
+        }
         build_reqwest_client_with_custom_ca(builder)
             .map_err(|error| ExecServerError::HttpRequest(error.to_string()))
     }
@@ -68,15 +83,12 @@ impl HttpClient for ReqwestHttpClient {
         params: HttpRequestParams,
     ) -> BoxFuture<'_, Result<HttpRequestResponse, ExecServerError>> {
         async move {
-            let runner = ReqwestHttpRequestRunner::new(params.timeout_ms)
-                .map_err(|error| ExecServerError::HttpRequest(error.message))?;
-            let (response, _) = runner
-                .run(HttpRequestParams {
-                    stream_response: false,
-                    ..params
-                })
-                .await
-                .map_err(|error| ExecServerError::HttpRequest(error.message))?;
+            let (response, _) = ReqwestHttpRequestRunner::run(HttpRequestParams {
+                stream_response: false,
+                ..params
+            })
+            .await
+            .map_err(|error| ExecServerError::HttpRequest(error.message))?;
             Ok(response)
         }
         .boxed()
@@ -87,15 +99,12 @@ impl HttpClient for ReqwestHttpClient {
         params: HttpRequestParams,
     ) -> BoxFuture<'_, Result<(HttpRequestResponse, HttpResponseBodyStream), ExecServerError>> {
         async move {
-            let runner = ReqwestHttpRequestRunner::new(params.timeout_ms)
-                .map_err(|error| ExecServerError::HttpRequest(error.message))?;
-            let (response, pending_stream) = runner
-                .run(HttpRequestParams {
-                    stream_response: true,
-                    ..params
-                })
-                .await
-                .map_err(|error| ExecServerError::HttpRequest(error.message))?;
+            let (response, pending_stream) = ReqwestHttpRequestRunner::run(HttpRequestParams {
+                stream_response: true,
+                ..params
+            })
+            .await
+            .map_err(|error| ExecServerError::HttpRequest(error.message))?;
             let pending_stream = pending_stream.ok_or_else(|| {
                 ExecServerError::Protocol(
                     "http request stream did not return a response body stream".to_string(),
@@ -111,14 +120,7 @@ impl HttpClient for ReqwestHttpClient {
 }
 
 impl ReqwestHttpRequestRunner {
-    pub(crate) fn new(timeout_ms: Option<u64>) -> Result<Self, JSONRPCErrorError> {
-        let client = ReqwestHttpClient::build_client(timeout_ms)
-            .map_err(|error| internal_error(error.to_string()))?;
-        Ok(Self { client })
-    }
-
     pub(crate) async fn run(
-        &self,
         params: HttpRequestParams,
     ) -> Result<(HttpRequestResponse, Option<PendingReqwestHttpBodyStream>), JSONRPCErrorError>
     {
@@ -135,8 +137,10 @@ impl ReqwestHttpRequestRunner {
             }
         }
 
+        let client = ReqwestHttpClient::build_client(params.timeout_ms, &url)
+            .map_err(|error| internal_error(error.to_string()))?;
         let headers = Self::build_headers(params.headers)?;
-        let mut request = self.client.request(method.clone(), url).headers(headers);
+        let mut request = client.request(method.clone(), url).headers(headers);
         if let Some(body) = params.body {
             request = request.body(body.into_inner());
         }
@@ -273,6 +277,16 @@ impl ReqwestHttpRequestRunner {
     }
 }
 
+fn is_literal_loopback_url(url: &Url) -> bool {
+    if !matches!(url.scheme(), "http" | "https") {
+        return false;
+    }
+    url.host_str()
+        .map(|host| host.trim_matches(['[', ']']))
+        .and_then(|host| host.parse::<IpAddr>().ok())
+        .is_some_and(|ip| ip.is_loopback())
+}
+
 fn log_send_error(method: &Method, error: reqwest::Error) {
     let error = error.without_url();
     let source_chain = error_source_chain(&error);
@@ -295,3 +309,7 @@ fn error_source_chain(error: &reqwest::Error) -> Option<String> {
     }
     (!sources.is_empty()).then(|| sources.join(": "))
 }
+
+#[cfg(test)]
+#[path = "reqwest_http_client_tests.rs"]
+mod tests;

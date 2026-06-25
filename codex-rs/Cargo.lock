@@ -2210,6 +2210,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "codex-apps"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "async-channel",
+ "axum",
+ "base64 0.22.1",
+ "codex-config",
+ "codex-connectors",
+ "codex-exec-server",
+ "codex-mcp",
+ "codex-protocol",
+ "codex-rmcp-client",
+ "codex-utils-string",
+ "constant_time_eq 0.3.1",
+ "futures",
+ "pretty_assertions",
+ "rand 0.9.3",
+ "reqwest 0.12.28",
+ "rmcp",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+ "tracing",
+]
+
+[[package]]
 name = "codex-arg0"
 version = "0.0.0"
 dependencies = [
@@ -3335,7 +3363,7 @@ dependencies = [
  "codex-protocol",
  "codex-rmcp-client",
  "codex-utils-path-uri",
- "codex-utils-plugins",
+ "codex-utils-string",
  "futures",
  "pretty_assertions",
  "regex-lite",
@@ -4395,6 +4423,7 @@ dependencies = [
  "regex-lite",
  "serde",
  "serde_json",
+ "sha1 0.10.6",
 ]
 
 [[package]]

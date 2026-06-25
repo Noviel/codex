@@ -47,7 +47,7 @@ use crate::connection_manager::McpConnectionManager;
 use crate::runtime::McpRuntimeContext;
 use crate::server::EffectiveMcpServer;
 
-pub const CODEX_APPS_MCP_SERVER_NAME: &str = "codex_apps";
+pub use codex_connectors::metadata::CODEX_APPS_MCP_SERVER_NAME;
 const MCP_TOOL_NAME_PREFIX: &str = "mcp";
 const MCP_TOOL_NAME_DELIMITER: &str = "__";
 const CODEX_CONNECTORS_TOKEN_ENV_VAR: &str = "CODEX_CONNECTORS_TOKEN";
