@@ -2250,6 +2250,7 @@ async fn spawn_thread_subagents_persist_parent_originator_across_new_and_truncat
         .manager
         .start_thread_with_options(StartThreadOptions {
             config: harness.config.clone(),
+            allow_provider_model_fallback: false,
             initial_history: InitialHistory::New,
             session_source: None,
             thread_source: None,

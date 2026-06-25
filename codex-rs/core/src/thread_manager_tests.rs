@@ -400,6 +400,7 @@ async fn start_thread_keeps_internal_threads_hidden_from_normal_lookups() {
     let thread = manager
         .start_thread_with_options(StartThreadOptions {
             config,
+            allow_provider_model_fallback: false,
             initial_history: InitialHistory::New,
             session_source: Some(SessionSource::Internal(
                 InternalSessionSource::MemoryConsolidation,
@@ -542,6 +543,7 @@ async fn start_thread_seeds_extension_data_for_mcp_and_lifecycle_contributors() 
     let first_thread = manager
         .start_thread_with_options(StartThreadOptions {
             config: config.clone(),
+            allow_provider_model_fallback: false,
             initial_history: InitialHistory::New,
             session_source: None,
             thread_source: None,
@@ -557,6 +559,7 @@ async fn start_thread_seeds_extension_data_for_mcp_and_lifecycle_contributors() 
     let second_thread = manager
         .start_thread_with_options(StartThreadOptions {
             config: config.clone(),
+            allow_provider_model_fallback: false,
             initial_history: InitialHistory::New,
             session_source: None,
             thread_source: None,
@@ -714,6 +717,7 @@ async fn resume_and_fork_do_not_restore_thread_environments_from_rollout() {
     let source = manager
         .start_thread_with_options(StartThreadOptions {
             config: source_config,
+            allow_provider_model_fallback: false,
             initial_history: InitialHistory::New,
             session_source: None,
             thread_source: None,
@@ -997,6 +1001,7 @@ async fn resume_stopped_thread_from_rollout_preserves_thread_source() {
     let source = manager
         .start_thread_with_options(StartThreadOptions {
             config: config.clone(),
+            allow_provider_model_fallback: false,
             initial_history: InitialHistory::New,
             session_source: None,
             thread_source: Some(ThreadSource::User),
