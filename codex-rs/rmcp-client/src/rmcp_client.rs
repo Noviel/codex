@@ -17,6 +17,7 @@ use codex_config::types::McpServerEnvVar;
 use codex_exec_server::HttpClient;
 use futures::FutureExt;
 use futures::future::BoxFuture;
+use oauth2::AccessToken;
 use oauth2::TokenResponse;
 use reqwest::header::AUTHORIZATION;
 use reqwest::header::HeaderMap;
@@ -703,9 +704,20 @@ impl RmcpClient {
     }
 
     async fn service(&self) -> Result<Arc<RunningService<RoleClient, ElicitationClientService>>> {
+        self.service_and_oauth_persistor()
+            .await
+            .map(|(service, _oauth_persistor)| service)
+    }
+
+    async fn service_and_oauth_persistor(
+        &self,
+    ) -> Result<(
+        Arc<RunningService<RoleClient, ElicitationClientService>>,
+        Option<OAuthPersistor>,
+    )> {
         let guard = self.state.lock().await;
         match &*guard {
-            ClientState::Ready { service, .. } => Ok(Arc::clone(service)),
+            ClientState::Ready { service, oauth } => Ok((Arc::clone(service), oauth.clone())),
             ClientState::Connecting { .. } => Err(anyhow!("MCP client not initialized")),
             ClientState::Closed => Err(anyhow!("MCP client is shut down")),
         }
@@ -960,7 +972,10 @@ impl RmcpClient {
         Fut: std::future::Future<Output = std::result::Result<T, rmcp::service::ServiceError>>,
     {
         let deadline = timeout.map(|duration| Instant::now() + duration);
-        let service = self.service().await?;
+        // Keep the OAuth persistor paired with the service that performs this operation. Session
+        // recovery can replace both while the request is in flight; rereading only the persistor
+        // after a 401 could refresh credentials owned by a different transport lifecycle.
+        let (service, oauth_persistor) = self.service_and_oauth_persistor().await?;
         let mut result = Self::run_service_operation_with_transient_retries(
             Arc::clone(&service),
             label,
@@ -971,16 +986,19 @@ impl RmcpClient {
         )
         .await;
 
-        if result
+        if let Some(rejected_access_token) = result
             .as_ref()
-            .is_err_and(Self::is_unauthorized_operation_error)
-            && let Some(oauth_persistor) = self.oauth_persistor().await
+            .err()
+            .and_then(Self::rejected_access_token_from_operation_error)
+            && let Some(oauth_persistor) = oauth_persistor
         {
             // OAuth recovery is intentionally one-shot. The caller deadline gates whether recovery
             // starts and whether the retry runs, but it must not cancel an in-flight provider
             // refresh before a rotated token is persisted.
             remaining_operation_timeout(label, timeout, deadline)?;
-            let refresh_result = oauth_persistor.refresh_after_unauthorized().await;
+            let refresh_result = oauth_persistor
+                .refresh_after_unauthorized(rejected_access_token)
+                .await;
             if let Err(error) = refresh_result {
                 if let Err(timeout_error) = remaining_operation_timeout(label, timeout, deadline) {
                     return Err(timeout_error.into());
@@ -1134,28 +1152,31 @@ impl RmcpClient {
             })
     }
 
-    fn is_unauthorized_operation_error(error: &ClientOperationError) -> bool {
+    fn rejected_access_token_from_operation_error(
+        error: &ClientOperationError,
+    ) -> Option<AccessToken> {
         let ClientOperationError::Service(rmcp::service::ServiceError::TransportSend(error)) =
             error
         else {
-            return false;
+            return None;
         };
 
         error
             .error
             .downcast_ref::<StreamableHttpError<StreamableHttpClientAdapterError>>()
-            .is_some_and(Self::is_unauthorized_streamable_http_error)
+            .and_then(Self::rejected_access_token)
     }
 
-    pub(super) fn is_unauthorized_streamable_http_error(
+    pub(super) fn rejected_access_token(
         error: &StreamableHttpError<StreamableHttpClientAdapterError>,
-    ) -> bool {
+    ) -> Option<AccessToken> {
         match error {
-            StreamableHttpError::AuthRequired(_) => true,
-            StreamableHttpError::UnexpectedServerResponse(message) => {
-                message.starts_with("HTTP 401")
-            }
-            _ => false,
+            StreamableHttpError::Client(
+                StreamableHttpClientAdapterError::AccessTokenRejected {
+                    rejected_access_token,
+                },
+            ) => Some(rejected_access_token.clone()),
+            _ => None,
         }
     }
 

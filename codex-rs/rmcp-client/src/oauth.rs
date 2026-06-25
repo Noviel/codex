@@ -1293,8 +1293,17 @@ mod tests {
         persistor
             .refresh_if_needed_with_keyring_store(&store)
             .await?;
+        persistor
+            .refresh_after_unauthorized_with_keyring_store(
+                &store,
+                initial_tokens.token_response.0.access_token().clone(),
+            )
+            .await?;
         let error = persistor
-            .refresh_after_unauthorized_with_keyring_store(&store)
+            .refresh_after_unauthorized_with_keyring_store(
+                &store,
+                AccessToken::new("updated-access-token".to_string()),
+            )
             .await
             .expect_err("B cannot be refreshed by rereading durable A");
         assert!(
@@ -1308,7 +1317,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn unauthorized_transaction_without_expiry_refreshes_once_across_clients() -> Result<()> {
+    async fn unauthorized_transaction_refreshes_once_for_delayed_same_and_cross_client_401s()
+    -> Result<()> {
         let _env = TempCodexHome::new();
         let server = MockServer::start().await;
         mount_oauth_metadata(&server).await;
@@ -1349,12 +1359,19 @@ mod tests {
             ResolvedOAuthCredentialStore::Keyring(AuthKeyringBackendKind::Direct),
             Some(initial_tokens.clone()),
         );
+        let rejected_access_token = initial_tokens.token_response.0.access_token().clone();
 
         first
-            .refresh_after_unauthorized_with_keyring_store(&store)
+            .refresh_after_unauthorized_with_keyring_store(&store, rejected_access_token.clone())
+            .await?;
+        // A second request from this same client may have sent the original token before the first
+        // request completed recovery. Its delayed 401 must adopt the rotated credentials rather
+        // than trigger another provider refresh.
+        first
+            .refresh_after_unauthorized_with_keyring_store(&store, rejected_access_token.clone())
             .await?;
         second
-            .refresh_after_unauthorized_with_keyring_store(&store)
+            .refresh_after_unauthorized_with_keyring_store(&store, rejected_access_token)
             .await?;
 
         server.verify().await;

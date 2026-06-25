@@ -22,6 +22,7 @@ use codex_exec_server::HttpResponseBodyStream;
 use futures::StreamExt;
 use futures::stream;
 use futures::stream::BoxStream;
+use oauth2::AccessToken;
 use reqwest::StatusCode;
 use reqwest::header::ACCEPT;
 use reqwest::header::AUTHORIZATION;
@@ -61,6 +62,8 @@ pub(crate) struct StreamableHttpClientAdapter {
 pub(crate) enum StreamableHttpClientAdapterError {
     #[error("streamable HTTP session expired with 404 Not Found")]
     SessionExpired404,
+    #[error("MCP server rejected the access token with HTTP 401 Unauthorized")]
+    AccessTokenRejected { rejected_access_token: AccessToken },
     #[error(transparent)]
     HttpRequest(#[from] ExecServerError),
     #[error("invalid HTTP header: {0}")]
@@ -109,7 +112,7 @@ impl StreamableHttpClient for StreamableHttpClientAdapter {
             JSON_MIME_TYPE.to_string(),
             StreamableHttpClientAdapterError::Header,
         )?;
-        if let Some(auth_token) = auth_token {
+        if let Some(auth_token) = auth_token.as_deref() {
             insert_header(
                 &mut headers,
                 AUTHORIZATION,
@@ -160,6 +163,19 @@ impl StreamableHttpClient for StreamableHttpClientAdapter {
         if response.status == StatusCode::NOT_FOUND.as_u16() && session_id.is_some() {
             return Err(StreamableHttpError::Client(
                 StreamableHttpClientAdapterError::SessionExpired404,
+            ));
+        }
+        // Preserve the token associated with this response. Reading the current credential after
+        // a delayed 401 is racy: another concurrent request may already have refreshed A to B, in
+        // which case recovery must retry B rather than refresh B a second time. AccessToken's
+        // Debug implementation redacts the secret if this error is logged.
+        if response.status == StatusCode::UNAUTHORIZED.as_u16()
+            && let Some(rejected_access_token) = auth_token
+        {
+            return Err(StreamableHttpError::Client(
+                StreamableHttpClientAdapterError::AccessTokenRejected {
+                    rejected_access_token: AccessToken::new(rejected_access_token),
+                },
             ));
         }
         if response.status == StatusCode::UNAUTHORIZED.as_u16()

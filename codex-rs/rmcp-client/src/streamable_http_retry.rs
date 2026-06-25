@@ -5,6 +5,7 @@ use std::time::Instant;
 use anyhow::Result;
 use anyhow::anyhow;
 use codex_exec_server::ExecServerError;
+use oauth2::AccessToken;
 use reqwest::StatusCode;
 use rmcp::service::RoleClient;
 use rmcp::service::RunningService;
@@ -50,7 +51,12 @@ impl RmcpClient {
             .await
         {
             Ok(result) => Ok(result),
-            Err(error) if Self::is_unauthorized_initialize_error(&error) => {
+            Err(error) => {
+                let Some(rejected_access_token) =
+                    Self::rejected_access_token_from_initialize_error(&error)
+                else {
+                    return Err(error);
+                };
                 let Some(oauth_persistor) = attempt_context.oauth_persistor else {
                     return Err(error);
                 };
@@ -61,7 +67,9 @@ impl RmcpClient {
                 // deliberately excluded from the startup budget.
                 remaining_initialize_timeout(timeout, *initialize_deadline)?;
                 let refresh_started_at = Instant::now();
-                let refresh_result = oauth_persistor.refresh_after_unauthorized().await;
+                let refresh_result = oauth_persistor
+                    .refresh_after_unauthorized(rejected_access_token)
+                    .await;
                 if let Some(deadline) = initialize_deadline.as_mut() {
                     *deadline += refresh_started_at.elapsed();
                 }
@@ -86,7 +94,6 @@ impl RmcpClient {
                 )
                 .await
             }
-            Err(error) => Err(error),
         }
     }
 
@@ -187,26 +194,30 @@ impl RmcpClient {
         })
     }
 
-    fn is_unauthorized_initialize_error(error: &anyhow::Error) -> bool {
-        error.chain().any(|source| {
+    fn rejected_access_token_from_initialize_error(error: &anyhow::Error) -> Option<AccessToken> {
+        error.chain().find_map(|source| {
             source
                 .downcast_ref::<HandshakeError>()
-                .is_some_and(|error| Self::is_unauthorized_client_initialize_error(&error.source))
-                || source
-                    .downcast_ref::<rmcp::service::ClientInitializeError>()
-                    .is_some_and(Self::is_unauthorized_client_initialize_error)
+                .and_then(|error| {
+                    Self::rejected_access_token_from_client_initialize_error(&error.source)
+                })
+                .or_else(|| {
+                    source
+                        .downcast_ref::<rmcp::service::ClientInitializeError>()
+                        .and_then(Self::rejected_access_token_from_client_initialize_error)
+                })
         })
     }
 
-    fn is_unauthorized_client_initialize_error(
+    fn rejected_access_token_from_client_initialize_error(
         error: &rmcp::service::ClientInitializeError,
-    ) -> bool {
+    ) -> Option<AccessToken> {
         match error {
             rmcp::service::ClientInitializeError::TransportError { error, .. } => error
                 .error
                 .downcast_ref::<StreamableHttpError<StreamableHttpClientAdapterError>>()
-                .is_some_and(Self::is_unauthorized_streamable_http_error),
-            _ => false,
+                .and_then(Self::rejected_access_token),
+            _ => None,
         }
     }
 
@@ -260,6 +271,9 @@ impl RmcpClient {
             | StreamableHttpError::ServerDoesNotSupportSse
             | StreamableHttpError::Deserialize(_)
             | StreamableHttpError::Client(StreamableHttpClientAdapterError::SessionExpired404)
+            | StreamableHttpError::Client(
+                StreamableHttpClientAdapterError::AccessTokenRejected { .. },
+            )
             | StreamableHttpError::Client(StreamableHttpClientAdapterError::Header(_)) => false,
             _ => false,
         }
