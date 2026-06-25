@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 use std::time::Duration;
+use std::time::Instant;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 
@@ -18,6 +19,7 @@ use rmcp::transport::auth::OAuthTokenResponse;
 use rmcp::transport::auth::StoredCredentials;
 use tokio::sync::Mutex;
 use tokio::time::timeout;
+use tracing::debug;
 use tracing::warn;
 
 use super::ResolvedOAuthCredentialStore;
@@ -47,7 +49,17 @@ struct OAuthPersistorInner {
     url: String,
     authorization_manager: Arc<Mutex<AuthorizationManager>>,
     credential_store: ResolvedOAuthCredentialStore,
-    last_credentials: Mutex<Option<StoredOAuthTokens>>,
+    credential_state: Mutex<CredentialState>,
+}
+
+struct CredentialState {
+    current: Option<StoredOAuthTokens>,
+    // A successful provider response becomes authoritative for this client before the fallible
+    // durable write. We intentionally do not retry that write in this stack: healthy in-memory
+    // credentials may keep serving this process, while any later refresh that would reread the
+    // older durable token fails closed. The persistence warning is the signal for deciding whether
+    // a bounded retry policy is warranted in a follow-up.
+    has_unpersisted_refresh: bool,
 }
 
 impl OAuthPersistor {
@@ -64,7 +76,10 @@ impl OAuthPersistor {
                 url,
                 authorization_manager,
                 credential_store,
-                last_credentials: Mutex::new(initial_credentials),
+                credential_state: Mutex::new(CredentialState {
+                    current: initial_credentials,
+                    has_unpersisted_refresh: false,
+                }),
             }),
         }
     }
@@ -83,8 +98,8 @@ impl OAuthPersistor {
         keyring_store: &K,
     ) -> Result<()> {
         let snapshot = {
-            let last_credentials = self.inner.last_credentials.lock().await;
-            last_credentials.clone()
+            let state = self.inner.credential_state.lock().await;
+            state.current.clone()
         };
         let (client_id, current_credentials) = self.manager_credentials().await?;
         let manager_changed = match (&snapshot, current_credentials.as_ref()) {
@@ -127,8 +142,9 @@ impl OAuthPersistor {
                 Some(latest) => self.adopt_credentials(latest).await?,
                 None => {
                     self.clear_manager_credentials().await;
-                    let mut last_credentials = self.inner.last_credentials.lock().await;
-                    *last_credentials = None;
+                    let mut state = self.inner.credential_state.lock().await;
+                    state.current = None;
+                    state.has_unpersisted_refresh = false;
                 }
             }
             return Ok(());
@@ -187,14 +203,15 @@ impl OAuthPersistor {
 
         match maybe_credentials {
             Some(credentials) => {
-                let mut last_credentials = self.inner.last_credentials.lock().await;
+                let mut state = self.inner.credential_state.lock().await;
                 let new_token_response = WrappedOAuthTokenResponse(credentials.clone());
-                let same_token = last_credentials
+                let same_token = state
+                    .current
                     .as_ref()
                     .map(|prev| prev.token_response == new_token_response)
                     .unwrap_or(false);
                 let expires_at = if same_token {
-                    last_credentials.as_ref().and_then(|prev| prev.expires_at)
+                    state.current.as_ref().and_then(|prev| prev.expires_at)
                 } else {
                     compute_expires_at_millis(&credentials)
                 };
@@ -205,24 +222,43 @@ impl OAuthPersistor {
                     token_response: new_token_response,
                     expires_at,
                 };
-                if last_credentials.as_ref() != Some(&stored) {
-                    match self.inner.credential_store {
-                        ResolvedOAuthCredentialStore::File => save_oauth_tokens_to_file(&stored)?,
+                if state.current.as_ref() != Some(&stored) {
+                    // The provider may already have consumed the old rotating refresh token. Make
+                    // B authoritative in this process before the fallible save so a later public
+                    // operation cannot reinstall A from the last snapshot.
+                    state.current = Some(stored.clone());
+                    state.has_unpersisted_refresh = true;
+                    debug!("persisting refreshed MCP OAuth credentials to the resolved store");
+                    let persistence_started_at = Instant::now();
+                    let persistence_result = match self.inner.credential_store {
+                        ResolvedOAuthCredentialStore::File => save_oauth_tokens_to_file(&stored),
                         ResolvedOAuthCredentialStore::Keyring(keyring_backend_kind) => {
                             save_oauth_tokens_with_keyring(
                                 keyring_store,
                                 keyring_backend_kind,
                                 &self.inner.server_name,
                                 &stored,
-                            )?;
+                            )
                         }
+                    };
+                    if let Err(error) = persistence_result {
+                        warn!(
+                            persistence_elapsed_ms = persistence_started_at.elapsed().as_millis(),
+                            error = %error,
+                            "failed to persist refreshed MCP OAuth credentials; retaining them as the in-process authority without retrying persistence"
+                        );
+                        return Err(error);
                     }
-                    *last_credentials = Some(stored);
+                    state.has_unpersisted_refresh = false;
+                    debug!(
+                        persistence_elapsed_ms = persistence_started_at.elapsed().as_millis(),
+                        "persisted refreshed MCP OAuth credentials"
+                    );
                 }
             }
             None => {
-                let mut last_serialized = self.inner.last_credentials.lock().await;
-                if last_serialized.take().is_some()
+                let mut state = self.inner.credential_state.lock().await;
+                if state.current.take().is_some()
                     && let Err(error) = match self.inner.credential_store {
                         ResolvedOAuthCredentialStore::File => {
                             let key = compute_store_key(&self.inner.server_name, &self.inner.url)?;
@@ -251,6 +287,7 @@ impl OAuthPersistor {
                         self.inner.server_name
                     );
                 }
+                state.has_unpersisted_refresh = false;
             }
         }
 
@@ -273,10 +310,6 @@ impl OAuthPersistor {
         .await
     }
 
-    #[expect(
-        clippy::await_holding_invalid_type,
-        reason = "AuthorizationManager async access must be serialized through its mutex"
-    )]
     pub(super) async fn refresh_if_needed_with_keyring_store_and_timeout<
         K: KeyringStore + Clone + 'static,
     >(
@@ -285,17 +318,88 @@ impl OAuthPersistor {
         refresh_request_timeout: Duration,
     ) -> Result<()> {
         let expires_at = {
-            let guard = self.inner.last_credentials.lock().await;
-            guard.as_ref().and_then(|tokens| tokens.expires_at)
+            let state = self.inner.credential_state.lock().await;
+            state.current.as_ref().and_then(|tokens| tokens.expires_at)
         };
 
         if !token_needs_refresh(expires_at) {
             return Ok(());
         }
 
+        self.run_owned_refresh_transaction(keyring_store.clone(), refresh_request_timeout)
+            .await
+    }
+
+    async fn run_owned_refresh_transaction<K: KeyringStore + Clone + 'static>(
+        &self,
+        keyring_store: K,
+        refresh_request_timeout: Duration,
+    ) -> Result<()> {
+        let persistor = self.clone();
+        let server_name = self.inner.server_name.clone();
+        // Once a provider request can consume a rotating refresh token, dropping the caller's
+        // future must not also drop the refresh-and-persist transaction. Dropping this JoinHandle
+        // detaches the task, so it continues while the provider request remains bounded by
+        // `refresh_request_timeout` and the credential lock remains bounded by its own timeout.
+        //
+        // A provider timeout deliberately leaves the outcome unknown, releases the lock, and
+        // permits a later serialized retry. Some providers accept the previous token during a
+        // grace period; otherwise that retry surfaces reauthorization. We accept that residual
+        // token-family-revocation risk rather than holding the lock indefinitely.
+        tokio::spawn(async move {
+            persistor
+                .refresh_transaction(&keyring_store, refresh_request_timeout)
+                .await
+        })
+        .await
+        .with_context(|| format!("OAuth refresh task failed for server {server_name}"))?
+    }
+
+    #[expect(
+        clippy::await_holding_invalid_type,
+        reason = "AuthorizationManager async access must be serialized through its mutex"
+    )]
+    #[tracing::instrument(
+        level = "debug",
+        skip_all,
+        fields(server_name = %self.inner.server_name),
+        err
+    )]
+    async fn refresh_transaction<K: KeyringStore + Clone + 'static>(
+        &self,
+        keyring_store: &K,
+        refresh_request_timeout: Duration,
+    ) -> Result<()> {
+        let transaction_started_at = Instant::now();
+        let lock_started_at = Instant::now();
+        debug!("waiting for the MCP OAuth credential transaction lock");
         let _lock =
             RefreshCredentialLock::acquire_for_server(&self.inner.server_name, &self.inner.url)
                 .await?;
+        debug!(
+            lock_wait_ms = lock_started_at.elapsed().as_millis(),
+            "acquired the MCP OAuth credential transaction lock"
+        );
+
+        {
+            let state = self.inner.credential_state.lock().await;
+            if state.has_unpersisted_refresh {
+                if state
+                    .current
+                    .as_ref()
+                    .is_some_and(|tokens| !token_needs_refresh(tokens.expires_at))
+                {
+                    debug!(
+                        "using the memory-authoritative MCP OAuth credentials from a refresh whose persistence failed"
+                    );
+                    return Ok(());
+                }
+                anyhow::bail!(
+                    "refusing to refresh MCP OAuth credentials for server {} because the previous refresh succeeded but its credentials were not persisted",
+                    self.inner.server_name
+                );
+            }
+        }
         // The refresh transaction must stay on the store that supplied its snapshot. Falling back
         // here could replay an older rotating refresh token from the other store. We assume store
         // availability is stable for this client lifecycle and surface violations of that
@@ -307,8 +411,9 @@ impl OAuthPersistor {
         // refresh so this process never sends a refresh token superseded by another process.
         let Some(latest) = latest else {
             self.clear_manager_credentials().await;
-            let mut last_credentials = self.inner.last_credentials.lock().await;
-            *last_credentials = None;
+            let mut state = self.inner.credential_state.lock().await;
+            state.current = None;
+            state.has_unpersisted_refresh = false;
             anyhow::bail!(
                 "OAuth tokens for server {} were removed before refresh; authorization required",
                 self.inner.server_name
@@ -325,32 +430,64 @@ impl OAuthPersistor {
         {
             let manager = self.inner.authorization_manager.clone();
             let guard = manager.lock().await;
+            let provider_started_at = Instant::now();
+            debug!(
+                timeout_ms = refresh_request_timeout.as_millis(),
+                "requesting refreshed MCP OAuth credentials from the provider"
+            );
             match timeout(refresh_request_timeout, guard.refresh_token()).await {
-                Ok(result) => {
-                    result.with_context(|| {
+                Ok(Ok(_token_response)) => {
+                    debug!(
+                        provider_elapsed_ms = provider_started_at.elapsed().as_millis(),
+                        "received refreshed MCP OAuth credentials from the provider"
+                    );
+                }
+                Ok(Err(error)) => {
+                    warn!(
+                        provider_elapsed_ms = provider_started_at.elapsed().as_millis(),
+                        error = %error,
+                        "MCP OAuth provider refresh failed"
+                    );
+                    return Err(error).with_context(|| {
                         format!(
                             "failed to refresh OAuth tokens for server {}",
                             self.inner.server_name
                         )
-                    })?;
+                    });
                 }
-                Err(_) => anyhow::bail!(
-                    "timed out after {refresh_request_timeout:?} refreshing OAuth tokens for server {}",
-                    self.inner.server_name
-                ),
+                Err(_) => {
+                    warn!(
+                        provider_elapsed_ms = provider_started_at.elapsed().as_millis(),
+                        timeout_ms = refresh_request_timeout.as_millis(),
+                        "MCP OAuth provider refresh timed out; the outcome is unknown and a later serialized retry is permitted"
+                    );
+                    anyhow::bail!(
+                        "timed out after {refresh_request_timeout:?} refreshing OAuth tokens for server {}",
+                        self.inner.server_name
+                    );
+                }
             }
         }
 
         // Once the provider returns a rotated token, persistence must finish before the credential
         // lock is released. In particular, caller startup deadlines must not cancel this step.
-        self.persist_if_needed_with_keyring_store(keyring_store)
-            .await
+        let result = self
+            .persist_if_needed_with_keyring_store(keyring_store)
+            .await;
+        if result.is_ok() {
+            debug!(
+                transaction_elapsed_ms = transaction_started_at.elapsed().as_millis(),
+                "completed the MCP OAuth refresh transaction"
+            );
+        }
+        result
     }
 
     async fn adopt_credentials(&self, tokens: StoredOAuthTokens) -> Result<()> {
         install_tokens_in_manager(&self.inner.authorization_manager, &tokens).await?;
-        let mut last_credentials = self.inner.last_credentials.lock().await;
-        *last_credentials = Some(tokens);
+        let mut state = self.inner.credential_state.lock().await;
+        state.current = Some(tokens);
+        state.has_unpersisted_refresh = false;
         Ok(())
     }
 

@@ -810,6 +810,8 @@ mod tests {
     use std::sync::MutexGuard;
     use std::sync::OnceLock;
     use std::sync::PoisonError;
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::atomic::Ordering;
     use std::sync::mpsc;
     use tempfile::tempdir;
     use tokio::sync::Mutex as TokioMutex;
@@ -1254,7 +1256,7 @@ mod tests {
         let persistor = OAuthPersistor::new(
             initial_tokens.server_name.clone(),
             initial_tokens.url.clone(),
-            manager,
+            manager.clone(),
             ResolvedOAuthCredentialStore::Keyring(AuthKeyringBackendKind::Direct),
             Some(initial_tokens),
         );
@@ -1273,6 +1275,16 @@ mod tests {
             "unexpected error: {error:#}"
         );
         assert!(!super::fallback_file_path()?.exists());
+
+        // B remains authoritative in memory without retrying the failed durable write.
+        persistor
+            .persist_if_needed_with_keyring_store(&store)
+            .await?;
+        persistor
+            .refresh_if_needed_with_keyring_store(&store)
+            .await?;
+        let manager_tokens = tokens_from_manager(&manager).await?;
+        assert_eq!(access_token(&manager_tokens), "updated-access-token");
         Ok(())
     }
 
@@ -1503,6 +1515,143 @@ mod tests {
             refresh_token(&stored.tokens),
             Some("rotated-from-latest-token".to_string())
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn provider_refresh_timeout_permits_a_later_serialized_retry() -> Result<()> {
+        let _env = TempCodexHome::new();
+        let server = MockServer::start().await;
+        mount_oauth_metadata(&server).await;
+        let request_count = Arc::new(AtomicUsize::new(/*v*/ 0));
+        let request_count_for_response = Arc::clone(&request_count);
+        Mock::given(method("POST"))
+            .and(path("/oauth/token"))
+            .and(body_string_contains("grant_type=refresh_token"))
+            .and(body_string_contains("refresh_token=refresh-token"))
+            .respond_with(move |_request: &wiremock::Request| {
+                let response = ResponseTemplate::new(200).set_body_json(json!({
+                    "access_token": "retried-access-token",
+                    "token_type": "Bearer",
+                    "expires_in": 3600,
+                    "refresh_token": "retried-refresh-token",
+                    "scope": "scope-a scope-b",
+                }));
+                if request_count_for_response.fetch_add(1, Ordering::SeqCst) == 0 {
+                    response.set_delay(Duration::from_millis(500))
+                } else {
+                    response
+                }
+            })
+            .expect(2)
+            .mount(&server)
+            .await;
+
+        let store = MockKeyringStore::default();
+        let initial_tokens = expired_sample_tokens(&format!("{}/mcp", server.uri()));
+        super::save_oauth_tokens_with_keyring_store(
+            &store,
+            &initial_tokens.server_name,
+            &initial_tokens,
+            OAuthCredentialsStoreMode::Keyring,
+            AuthKeyringBackendKind::Direct,
+        )?;
+        let manager = authorization_manager_for(&initial_tokens).await?;
+        let persistor = OAuthPersistor::new(
+            initial_tokens.server_name.clone(),
+            initial_tokens.url.clone(),
+            manager,
+            ResolvedOAuthCredentialStore::Keyring(AuthKeyringBackendKind::Direct),
+            Some(initial_tokens.clone()),
+        );
+
+        let first_error = persistor
+            .refresh_if_needed_with_keyring_store_and_timeout(&store, Duration::from_millis(100))
+            .await
+            .expect_err("the first provider request should reach its explicit timeout");
+        assert!(first_error.to_string().contains("timed out after 100ms"));
+
+        persistor
+            .refresh_if_needed_with_keyring_store_and_timeout(&store, Duration::from_secs(1))
+            .await?;
+
+        let stored = super::load_oauth_tokens_with_source_and_keyring_store(
+            &store,
+            &initial_tokens.server_name,
+            &initial_tokens.url,
+            OAuthCredentialsStoreMode::Keyring,
+            AuthKeyringBackendKind::Direct,
+        )?
+        .expect("the later retry should persist the rotated credentials");
+        assert_eq!(access_token(&stored.tokens), "retried-access-token");
+        assert_eq!(
+            refresh_token(&stored.tokens),
+            Some("retried-refresh-token".to_string())
+        );
+        assert_eq!(request_count.load(Ordering::SeqCst), 2);
+        server.verify().await;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn caller_cancellation_does_not_cancel_refresh_and_persistence() -> Result<()> {
+        let _env = TempCodexHome::new();
+        let server = MockServer::start().await;
+        mount_oauth_metadata(&server).await;
+        let refresh_started = mount_refresh_response_with_signal(
+            &server,
+            "refresh-token",
+            "cancel-safe-access-token",
+            "cancel-safe-refresh-token",
+            Duration::from_millis(300),
+        )
+        .await;
+
+        let store = MockKeyringStore::default();
+        let initial_tokens = expired_sample_tokens(&format!("{}/mcp", server.uri()));
+        super::save_oauth_tokens_with_keyring_store(
+            &store,
+            &initial_tokens.server_name,
+            &initial_tokens,
+            OAuthCredentialsStoreMode::Keyring,
+            AuthKeyringBackendKind::Direct,
+        )?;
+        let manager = authorization_manager_for(&initial_tokens).await?;
+        let persistor = OAuthPersistor::new(
+            initial_tokens.server_name.clone(),
+            initial_tokens.url.clone(),
+            manager,
+            ResolvedOAuthCredentialStore::Keyring(AuthKeyringBackendKind::Direct),
+            Some(initial_tokens.clone()),
+        );
+        let caller = tokio::spawn({
+            let persistor = persistor.clone();
+            let store = store.clone();
+            async move { persistor.refresh_if_needed_with_keyring_store(&store).await }
+        });
+
+        wait_for_signal(refresh_started).await?;
+        caller.abort();
+        let caller_error = caller
+            .await
+            .expect_err("the caller task should observe cancellation");
+        assert!(caller_error.is_cancelled());
+
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        let stored = super::load_oauth_tokens_with_source_and_keyring_store(
+            &store,
+            &initial_tokens.server_name,
+            &initial_tokens.url,
+            OAuthCredentialsStoreMode::Keyring,
+            AuthKeyringBackendKind::Direct,
+        )?
+        .expect("the independently owned refresh should still persist credentials");
+        assert_eq!(access_token(&stored.tokens), "cancel-safe-access-token");
+        assert_eq!(
+            refresh_token(&stored.tokens),
+            Some("cancel-safe-refresh-token".to_string())
+        );
+        server.verify().await;
         Ok(())
     }
 
