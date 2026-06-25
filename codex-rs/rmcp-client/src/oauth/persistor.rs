@@ -138,8 +138,8 @@ impl OAuthPersistor {
         refresh_request_timeout: Duration,
     ) -> Result<()> {
         let expires_at = {
-            let state = self.inner.credential_state.lock().await;
-            state.current.as_ref().and_then(|tokens| tokens.expires_at)
+            let guard = self.inner.credential_state.lock().await;
+            guard.current.as_ref().and_then(|tokens| tokens.expires_at)
         };
 
         if !token_needs_refresh(expires_at) {
@@ -230,11 +230,13 @@ impl OAuthPersistor {
         {
             let state = self.inner.credential_state.lock().await;
             if state.has_unpersisted_refresh {
-                if state
-                    .current
-                    .as_ref()
-                    .is_some_and(|current| credentials_satisfy_refresh_reason(current, &reason))
-                {
+                let Some(current) = state.current.as_ref() else {
+                    anyhow::bail!(
+                        "MCP OAuth credential state for server {} is missing after a failed persistence attempt",
+                        self.inner.server_name
+                    );
+                };
+                if credentials_satisfy_refresh_reason(current, &reason) {
                     debug!(
                         "using the memory-authoritative MCP OAuth credentials from a refresh whose persistence failed"
                     );
@@ -246,10 +248,12 @@ impl OAuthPersistor {
                 );
             }
         }
+
         // The refresh transaction must stay on the store that supplied its snapshot. Falling back
         // here could replay an older rotating refresh token from the other store. We assume store
         // availability is stable for this client lifecycle and surface violations of that
         // assumption instead of switching stores.
+        debug!("rereading authoritative MCP OAuth credentials");
         let latest = self.load_resolved_credentials(keyring_store)?;
 
         // The pre-lock snapshot only decides whether a refresh transaction might be needed. Once
@@ -272,34 +276,43 @@ impl OAuthPersistor {
         // If a delayed request rejected A after another request refreshed A to B, adopt B and let
         // the caller retry instead of rotating B again.
         let should_adopt = !token_needs_refresh(latest.expires_at)
-            && match reason {
+            && match &reason {
                 RefreshReason::Expiry => true,
                 RefreshReason::Unauthorized {
                     rejected_access_token,
                 } => rejected_access_token.secret() != latest_access_token,
             };
         if should_adopt {
+            debug!("adopting newer MCP OAuth credentials without contacting the provider");
             self.adopt_credentials(latest).await?;
             return Ok(());
         }
 
         let manager = self.inner.authorization_manager.clone();
         let mut guard = manager.lock().await;
-        install_tokens_in_manager_guard(&mut guard, &latest)
-            .await
-            .context("failed to stage OAuth credentials for refresh")?;
+        if let Err(error) =
+            install_tokens_in_manager_guard(&mut guard, &latest, CredentialExposure::Refresh).await
+        {
+            install_tokens_in_manager_guard(&mut guard, &latest, CredentialExposure::Request)
+                .await
+                .context("failed to restore request-only OAuth credentials")?;
+            return Err(error).context("failed to stage OAuth credentials for refresh");
+        }
+        // The provider request has its own bound. The independently owned task prevents caller
+        // startup and operation deadlines from canceling this future after the provider may have
+        // rotated the refresh token.
         let provider_started_at = Instant::now();
         debug!(
             timeout_ms = refresh_request_timeout.as_millis(),
             "requesting refreshed MCP OAuth credentials from the provider"
         );
-        let refreshed = match timeout(refresh_request_timeout, guard.refresh_token()).await {
+        let refresh_result = match timeout(refresh_request_timeout, guard.refresh_token()).await {
             Ok(Ok(token_response)) => {
                 debug!(
                     provider_elapsed_ms = provider_started_at.elapsed().as_millis(),
                     "received refreshed MCP OAuth credentials from the provider"
                 );
-                refreshed_tokens(token_response, &latest, &self.inner)
+                Ok(refreshed_tokens(token_response, &latest, &self.inner))
             }
             Ok(Err(error)) => {
                 warn!(
@@ -307,12 +320,12 @@ impl OAuthPersistor {
                     error = %error,
                     "MCP OAuth provider refresh failed"
                 );
-                return Err(error).with_context(|| {
+                Err(error).with_context(|| {
                     format!(
                         "failed to refresh OAuth tokens for server {}",
                         self.inner.server_name
                     )
-                });
+                })
             }
             Err(_) => {
                 warn!(
@@ -320,17 +333,22 @@ impl OAuthPersistor {
                     timeout_ms = refresh_request_timeout.as_millis(),
                     "MCP OAuth provider refresh timed out; the outcome is unknown and a later serialized retry is permitted"
                 );
-                anyhow::bail!(
+                Err(anyhow::anyhow!(
                     "timed out after {refresh_request_timeout:?} refreshing OAuth tokens for server {}",
                     self.inner.server_name
-                );
+                ))
             }
         };
-        install_tokens_in_manager_guard(&mut guard, &refreshed)
-            .await
-            .context("failed to install refreshed OAuth credentials")?;
+        let request_tokens = refresh_result.as_ref().unwrap_or(&latest);
+        if let Err(error) =
+            install_tokens_in_manager_guard(&mut guard, request_tokens, CredentialExposure::Request)
+                .await
+        {
+            return Err(error).context("failed to restore request-only OAuth credentials");
+        }
         drop(guard);
 
+        let refreshed = refresh_result?;
         {
             let mut state = self.inner.credential_state.lock().await;
             state.current = Some(refreshed.clone());
@@ -418,7 +436,6 @@ fn credentials_satisfy_refresh_reason(
         } => rejected_access_token.secret() != credentials.token_response.0.access_token().secret(),
     }
 }
-
 #[expect(
     clippy::await_holding_invalid_type,
     reason = "AuthorizationManager async access must be serialized through its mutex"
@@ -429,16 +446,17 @@ async fn install_tokens_in_manager(
 ) -> Result<()> {
     let manager = authorization_manager.clone();
     let mut guard = manager.lock().await;
-    install_tokens_in_manager_guard(&mut guard, tokens).await
+    install_tokens_in_manager_guard(&mut guard, tokens, CredentialExposure::Request).await
 }
 
 async fn install_tokens_in_manager_guard(
     authorization_manager: &mut AuthorizationManager,
     tokens: &StoredOAuthTokens,
+    exposure: CredentialExposure,
 ) -> Result<()> {
     let store = InMemoryCredentialStore::new();
     store
-        .save(stored_credentials_from_tokens(tokens))
+        .save(stored_credentials_from_tokens(tokens, exposure))
         .await
         .context("failed to stage OAuth tokens for authorization manager")?;
 
@@ -453,16 +471,37 @@ async fn install_tokens_in_manager_guard(
     Ok(())
 }
 
-fn stored_credentials_from_tokens(tokens: &StoredOAuthTokens) -> StoredCredentials {
-    let token_response = tokens.token_response.0.clone();
+/// Controls which credentials are exposed to RMCP's authorization manager.
+///
+/// Normal requests receive neither the refresh token nor expiry metadata, so RMCP cannot refresh
+/// outside Codex's cross-process transaction. Full credentials are exposed only while that lock is
+/// held, and request-only credentials are restored before the transaction returns unless that
+/// restoration itself fails.
+#[derive(Clone, Copy)]
+enum CredentialExposure {
+    Request,
+    Refresh,
+}
+
+fn stored_credentials_from_tokens(
+    tokens: &StoredOAuthTokens,
+    exposure: CredentialExposure,
+) -> StoredCredentials {
+    let token_response = match exposure {
+        CredentialExposure::Request => request_oauth_token_response(tokens),
+        CredentialExposure::Refresh => tokens.token_response.0.clone(),
+    };
     let granted_scopes = token_response
         .scopes()
         .map(|scopes| scopes.iter().map(|scope| scope.to_string()).collect())
         .unwrap_or_default();
-    let token_received_at = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .ok()
-        .map(|duration| duration.as_secs());
+    let token_received_at = match exposure {
+        CredentialExposure::Request => None,
+        CredentialExposure::Refresh => SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .ok()
+            .map(|duration| duration.as_secs()),
+    };
 
     StoredCredentials::new(
         tokens.client_id.clone(),
@@ -470,6 +509,13 @@ fn stored_credentials_from_tokens(tokens: &StoredOAuthTokens) -> StoredCredentia
         granted_scopes,
         token_received_at,
     )
+}
+
+pub(crate) fn request_oauth_token_response(tokens: &StoredOAuthTokens) -> OAuthTokenResponse {
+    let mut token_response = tokens.token_response.0.clone();
+    token_response.set_refresh_token(None);
+    token_response.set_expires_in(None);
+    token_response
 }
 
 fn refreshed_tokens(

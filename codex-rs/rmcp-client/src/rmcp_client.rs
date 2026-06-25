@@ -72,7 +72,9 @@ use crate::oauth::ResolvedOAuthCredentialStore;
 use crate::oauth::StoredOAuthTokens;
 use crate::oauth::load_oauth_tokens_from_resolved_store;
 use crate::oauth::load_oauth_tokens_with_source;
+use crate::oauth::request_oauth_token_response;
 use crate::oauth_http_client::OAuthHttpClientAdapter;
+use crate::oauth_transport::OAuthTransportClient;
 use crate::stdio_server_launcher::StdioServerCommand;
 use crate::stdio_server_launcher::StdioServerLauncher;
 use crate::stdio_server_launcher::StdioServerProcessHandle;
@@ -99,7 +101,7 @@ enum PendingTransport {
         transport: StreamableHttpClientTransport<StreamableHttpClientAdapter>,
     },
     StreamableHttpWithOAuth {
-        transport: StreamableHttpClientTransport<AuthClient<StreamableHttpClientAdapter>>,
+        transport: StreamableHttpClientTransport<OAuthTransportClient>,
         oauth_persistor: OAuthPersistor,
     },
 }
@@ -133,6 +135,7 @@ enum TransportRecipe {
         store_mode: OAuthCredentialsStoreMode,
         keyring_backend_kind: AuthKeyringBackendKind,
         resolved_store: Arc<OnceLock<ResolvedOAuthCredentialStore>>,
+        oauth_client: Arc<OnceLock<OAuthTransportClient>>,
         http_client: Arc<dyn HttpClient>,
         auth_provider: Option<SharedAuthProvider>,
     },
@@ -410,6 +413,7 @@ impl RmcpClient {
             store_mode,
             keyring_backend_kind,
             resolved_store: Arc::new(OnceLock::new()),
+            oauth_client: Arc::new(OnceLock::new()),
             http_client,
             auth_provider,
         };
@@ -778,6 +782,7 @@ impl RmcpClient {
                 store_mode,
                 keyring_backend_kind,
                 resolved_store,
+                oauth_client,
                 http_client,
                 auth_provider,
             } => {
@@ -789,6 +794,23 @@ impl RmcpClient {
                     } else {
                         auth_provider.clone()
                     };
+
+                // Reuse the OAuth manager and persistor across initialize retries and session
+                // reconstruction. Besides pinning Auto's resolved source for this client
+                // lifecycle, this keeps a successfully refreshed in-memory token authoritative if
+                // writing it to the resolved store fails. Rebuilding from durable state in that
+                // condition could reinstall the already-consumed refresh token.
+                if let Some(oauth_client) = oauth_client.get() {
+                    let runtime = oauth_client.persistor();
+                    let transport = StreamableHttpClientTransport::with_client(
+                        oauth_client.clone(),
+                        StreamableHttpClientTransportConfig::with_uri(url.clone()),
+                    );
+                    return Ok(PendingTransport::StreamableHttpWithOAuth {
+                        transport,
+                        oauth_persistor: runtime,
+                    });
+                }
 
                 let initial_oauth_tokens = if bearer_token.is_none()
                     && auth_provider.is_none()
@@ -833,7 +855,7 @@ impl RmcpClient {
                     store: credential_store,
                 }) = initial_oauth_tokens
                 {
-                    match create_oauth_transport_and_runtime(
+                    match create_oauth_transport_client(
                         server_name,
                         url,
                         initial_tokens.clone(),
@@ -843,7 +865,19 @@ impl RmcpClient {
                     )
                     .await
                     {
-                        Ok((transport, oauth_persistor)) => {
+                        Ok(resolved_oauth_client) => {
+                            oauth_client
+                                .set(resolved_oauth_client.clone())
+                                .map_err(|_| {
+                                    anyhow!(
+                                        "OAuth client resolved concurrently for MCP server `{server_name}`"
+                                    )
+                                })?;
+                            let oauth_persistor = resolved_oauth_client.persistor();
+                            let transport = StreamableHttpClientTransport::with_client(
+                                resolved_oauth_client,
+                                StreamableHttpClientTransportConfig::with_uri(url.clone()),
+                            );
                             Ok(PendingTransport::StreamableHttpWithOAuth {
                                 transport,
                                 oauth_persistor,
@@ -992,9 +1026,12 @@ impl RmcpClient {
             .and_then(Self::rejected_access_token_from_operation_error)
             && let Some(oauth_persistor) = oauth_persistor
         {
-            // OAuth recovery is intentionally one-shot. The caller deadline gates whether recovery
-            // starts and whether the retry runs, but it must not cancel an in-flight provider
-            // refresh before a rotated token is persisted.
+            // Public request/notification recovery stays here rather than in the transport
+            // wrapper because this layer owns the caller deadline. RMCP can continue processing a
+            // queued transport message after the caller times out; retrying it inside the wrapper
+            // could therefore replay a timed-out tool call. The refresh transaction itself is
+            // independently owned and completes to its bounded provider timeout if this caller is
+            // canceled.
             remaining_operation_timeout(label, timeout, deadline)?;
             let refresh_result = oauth_persistor
                 .refresh_after_unauthorized(rejected_access_token)
@@ -1240,17 +1277,14 @@ impl RmcpClient {
     }
 }
 
-async fn create_oauth_transport_and_runtime(
+async fn create_oauth_transport_client(
     server_name: &str,
     url: &str,
     initial_tokens: StoredOAuthTokens,
     credential_store: ResolvedOAuthCredentialStore,
     default_headers: HeaderMap,
     http_client: Arc<dyn HttpClient>,
-) -> Result<(
-    StreamableHttpClientTransport<AuthClient<StreamableHttpClientAdapter>>,
-    OAuthPersistor,
-)> {
+) -> Result<OAuthTransportClient> {
     let oauth_http_client = Arc::new(OAuthHttpClientAdapter::new(
         http_client.clone(),
         default_headers.clone(),
@@ -1261,7 +1295,7 @@ async fn create_oauth_transport_and_runtime(
     oauth_state
         .set_credentials(
             &initial_tokens.client_id,
-            initial_tokens.token_response.0.clone(),
+            request_oauth_token_response(&initial_tokens),
         )
         .await?;
 
@@ -1279,11 +1313,6 @@ async fn create_oauth_transport_and_runtime(
     );
     let auth_manager = auth_client.auth_manager.clone();
 
-    let transport = StreamableHttpClientTransport::with_client(
-        auth_client,
-        StreamableHttpClientTransportConfig::with_uri(url.to_string()),
-    );
-
     let runtime = OAuthPersistor::new(
         server_name.to_string(),
         url.to_string(),
@@ -1292,7 +1321,7 @@ async fn create_oauth_transport_and_runtime(
         Some(initial_tokens),
     );
 
-    Ok((transport, runtime))
+    Ok(OAuthTransportClient::new(auth_client, runtime))
 }
 
 #[cfg(test)]

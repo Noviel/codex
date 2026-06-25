@@ -274,6 +274,7 @@ impl RmcpClient {
             | StreamableHttpError::Client(
                 StreamableHttpClientAdapterError::AccessTokenRejected { .. },
             )
+            | StreamableHttpError::Client(StreamableHttpClientAdapterError::OAuth(_))
             | StreamableHttpError::Client(StreamableHttpClientAdapterError::Header(_)) => false,
             _ => false,
         }
