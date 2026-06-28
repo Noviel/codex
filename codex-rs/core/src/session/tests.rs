@@ -3688,6 +3688,7 @@ async fn set_rate_limits_retains_previous_credits() {
         app_server_client_name: None,
         app_server_client_version: None,
         session_source: SessionSource::Exec,
+        history_mode: Default::default(),
         forked_from_thread_id: None,
         parent_thread_id: None,
         thread_source: None,
@@ -3794,6 +3795,7 @@ async fn set_rate_limits_updates_plan_type_when_present() {
         app_server_client_name: None,
         app_server_client_version: None,
         session_source: SessionSource::Exec,
+        history_mode: Default::default(),
         forked_from_thread_id: None,
         parent_thread_id: None,
         thread_source: None,
@@ -4052,6 +4054,7 @@ async fn attach_thread_persistence(session: &mut Session) -> PathBuf {
             dynamic_tools: Vec::new(),
             selected_capability_roots: Vec::new(),
             multi_agent_version: None,
+            history_mode: Default::default(),
             initial_window_id: Uuid::now_v7().to_string(),
             metadata: ThreadPersistenceMetadata {
                 cwd: Some(config.cwd.to_path_buf()),
@@ -4325,6 +4328,7 @@ pub(crate) async fn make_session_configuration_for_tests() -> SessionConfigurati
         app_server_client_name: None,
         app_server_client_version: None,
         session_source: SessionSource::Exec,
+        history_mode: Default::default(),
         forked_from_thread_id: None,
         parent_thread_id: None,
         thread_source: None,
@@ -5195,6 +5199,7 @@ async fn session_new_fails_when_zsh_fork_enabled_without_packaged_zsh() {
         app_server_client_name: None,
         app_server_client_version: None,
         session_source: SessionSource::Exec,
+        history_mode: Default::default(),
         forked_from_thread_id: None,
         parent_thread_id: None,
         thread_source: None,
@@ -5326,6 +5331,7 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
         app_server_client_name: None,
         app_server_client_version: None,
         session_source: SessionSource::Exec,
+        history_mode: Default::default(),
         forked_from_thread_id: None,
         parent_thread_id: None,
         thread_source: None,
@@ -5574,6 +5580,7 @@ async fn make_session_with_config_and_rx(
         app_server_client_name: None,
         app_server_client_version: None,
         session_source: SessionSource::Exec,
+        history_mode: Default::default(),
         forked_from_thread_id: None,
         parent_thread_id: None,
         thread_source: None,
@@ -5681,6 +5688,7 @@ async fn make_session_with_history_source_and_agent_control_and_rx(
         app_server_client_name: None,
         app_server_client_version: None,
         session_source: session_source.clone(),
+        history_mode: Default::default(),
         forked_from_thread_id: None,
         parent_thread_id: None,
         thread_source: None,
@@ -6935,6 +6943,7 @@ async fn shutdown_complete_does_not_append_to_thread_store_after_shutdown() {
             dynamic_tools: Vec::new(),
             selected_capability_roots: Vec::new(),
             multi_agent_version: None,
+            history_mode: Default::default(),
             initial_window_id: Uuid::now_v7().to_string(),
             metadata: ThreadPersistenceMetadata {
                 cwd: Some(config.cwd.to_path_buf()),
@@ -6966,7 +6975,7 @@ async fn shutdown_complete_does_not_append_to_thread_store_after_shutdown() {
 }
 
 #[tokio::test]
-async fn submission_loop_channel_close_emits_thread_stop_lifecycle() {
+async fn submission_loop_channel_close_runs_full_thread_teardown() {
     struct SessionStopMarker;
     struct ThreadStopMarker;
 
@@ -6993,6 +7002,41 @@ async fn submission_loop_channel_close_emits_thread_stop_lifecycle() {
     }
 
     let (mut session, turn_context) = make_session_and_context().await;
+    let store = Arc::new(codex_thread_store::InMemoryThreadStore::default());
+    let thread_store: Arc<dyn codex_thread_store::ThreadStore> = store.clone();
+    let config = session.get_config().await;
+    let live_thread = LiveThread::create(
+        Arc::clone(&thread_store),
+        CreateThreadParams {
+            session_id: session.session_id(),
+            thread_id: session.thread_id,
+            extra_config: None,
+            forked_from_id: None,
+            parent_thread_id: None,
+            source: SessionSource::Exec,
+            thread_source: None,
+            originator: "test_originator".to_string(),
+            base_instructions: BaseInstructions::default(),
+            dynamic_tools: Vec::new(),
+            selected_capability_roots: Vec::new(),
+            multi_agent_version: None,
+            history_mode: Default::default(),
+            initial_window_id: Uuid::now_v7().to_string(),
+            metadata: ThreadPersistenceMetadata {
+                cwd: Some(config.cwd.to_path_buf()),
+                model_provider: config.model_provider_id.clone(),
+                memory_mode: if config.memories.generate_memories {
+                    ThreadMemoryMode::Enabled
+                } else {
+                    ThreadMemoryMode::Disabled
+                },
+            },
+        },
+    )
+    .await
+    .expect("create thread persistence");
+    session.services.thread_store = thread_store;
+    session.services.live_thread = Some(live_thread);
     let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let mut builder = codex_extension_api::ExtensionRegistryBuilder::<crate::config::Config>::new();
     builder.thread_lifecycle_contributor(Arc::new(ThreadStopRecorder {
@@ -7015,6 +7059,14 @@ async fn submission_loop_channel_close_emits_thread_stop_lifecycle() {
     submission_loop(session, Arc::clone(&turn_context.config), rx_sub).await;
 
     assert_eq!(1, calls.load(std::sync::atomic::Ordering::SeqCst));
+    assert_eq!(
+        codex_thread_store::InMemoryThreadStoreCalls {
+            create_thread: 1,
+            shutdown_thread: 1,
+            ..Default::default()
+        },
+        store.calls().await
+    );
 }
 
 #[tokio::test]
@@ -7408,6 +7460,7 @@ where
         app_server_client_name: None,
         app_server_client_version: None,
         session_source: SessionSource::Exec,
+        history_mode: Default::default(),
         forked_from_thread_id: None,
         parent_thread_id: None,
         thread_source: None,
@@ -9191,6 +9244,7 @@ async fn attach_in_memory_thread_store(
             dynamic_tools: Vec::new(),
             selected_capability_roots: Vec::new(),
             multi_agent_version: None,
+            history_mode: Default::default(),
             initial_window_id: Uuid::now_v7().to_string(),
             metadata: ThreadPersistenceMetadata {
                 cwd: Some(config.cwd.to_path_buf()),
@@ -10432,6 +10486,7 @@ async fn fatal_tool_error_stops_turn_and_reports_error() {
         status: None,
         call_id: "call-1".to_string(),
         name: "shell_command".to_string(),
+        namespace: None,
         input: "{}".to_string(),
         internal_chat_message_metadata_passthrough: None,
     };
